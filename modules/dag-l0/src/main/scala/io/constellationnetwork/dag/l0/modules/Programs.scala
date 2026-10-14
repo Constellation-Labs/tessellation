@@ -10,7 +10,6 @@ import cats.syntax.all._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cluster.programs.TrustPush
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.Download
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpoint
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.json.JsonSerializer
@@ -46,8 +45,7 @@ object Programs {
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     mptStore: MptStore[F, GlobalStateKey],
-    seedlist: Option[Set[PeerId]],
-    recoveryCheckpoint: Option[RecoveryCheckpoint]
+    seedlist: Option[Set[PeerId]]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -74,8 +72,7 @@ object Programs {
           globalSnapshotStorage,
           sharedPrograms.joining,
           services.recoveryPeerHint,
-          seedlist,
-          recoveryCheckpoint
+          seedlist
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,

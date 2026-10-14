@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import cats.Order
-
 import scala.concurrent.duration.{Duration, FiniteDuration}
 
 import io.constellationnetwork.schema.peer.PeerId
@@ -19,6 +17,9 @@ import io.constellationnetwork.security.hash.Hash
   * committee prevents a newly admitted Tier-1 peer, which could not have signed the parent, from being immediately treated as missing.
   */
 object FinalityParticipationAuditor {
+
+  /** Consecutive locally observed signature misses before a node may vote to replace a signing member. */
+  val DefaultRequiredConsecutiveMisses: Int = 3
 
   final case class ObservedParent(ordinal: Long, hash: Hash)
 
@@ -73,16 +74,9 @@ object FinalityParticipationAuditor {
   def selectTarget(
     auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
-    entropy: Hash
-  ): Option[PeerId] = {
-    implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
-
-    auditablePeers
-      .intersect(parentRoundCommittee)
-      .toList
-      .sorted(scoreOrder.toOrdering)
-      .headOption
-  }
+    rotationIndex: Long
+  ): Option[PeerId] =
+    DeterministicRotation.rotated(auditablePeers.intersect(parentRoundCommittee), rotationIndex).headOption
 
   /** Advance local proof-miss history once for the finalized parent and evaluate this round's consensus-agreed audit target.
     *
@@ -99,11 +93,14 @@ object FinalityParticipationAuditor {
     locallyObservedParentSigners: Set[PeerId],
     parentOrdinal: Long,
     entropy: Hash,
+    // Audit-target rotation index derived from the current round ordinal (DeterministicRotation.opportunityIndex). Must match the
+    // StallDetector replacement pairing so every node audits the same target.
+    rotationIndex: Long,
     observedAt: FiniteDuration,
     requiredMissDuration: FiniteDuration,
     inBootstrap: Boolean,
     previous: MissHistory,
-    requiredConsecutiveMisses: Int = TierTransitions.DemotionConsecutiveMisses
+    requiredConsecutiveMisses: Int = DefaultRequiredConsecutiveMisses
   ): Observation = {
     val required = math.max(1, requiredConsecutiveMisses)
 
@@ -141,7 +138,7 @@ object FinalityParticipationAuditor {
       val nextHistory = MissHistory(Some(observedParent), nextMisses, nextMissStartedAt)
       val decision = Option
         .when(currentCore.contains(selfId)) {
-          selectTarget(auditablePeers, parentRoundCommittee, entropy)
+          selectTarget(auditablePeers, parentRoundCommittee, rotationIndex)
         }
         .flatten
         .map { target =>

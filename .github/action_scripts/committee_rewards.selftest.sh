@@ -4,7 +4,7 @@
 # Runs the real test script against a synthetic snapshot window in both directions and asserts BOTH
 # outcomes:
 #   1. correct behavior            -> exit 0
-#   2. legacy evidence-score filter -> exit non-zero, naming the unpaid Tier-1 climber
+#   2. admitted member left unpaid  -> exit non-zero, naming the unpaid admitted member
 #
 # (2) is the point. A test that only passes proves its assertions did not fire; this proves they CAN
 # fire on the specific behavior they target. It also catches the class of defect `node --check`
@@ -20,7 +20,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURE="$SCRIPT_DIR/committee_rewards.fixture.js"
 TEST_SCRIPT="$SCRIPT_DIR/committee_rewards.js"
-EXPECTED_ERROR='seated Tier-1 facilitator'
+EXPECTED_ERROR='seated admitted member'
 
 WORKSPACE="$(mktemp -d)"
 PASS_PORT=${COMMITTEE_SELFTEST_PORT:-18131}
@@ -75,21 +75,21 @@ if [ "$PASS_RC" != "0" ]; then
   cat "$WORKSPACE/pass.out" >&2
   fail "expected exit 0 against the correct fixture, got $PASS_RC"
 fi
-grep -q 'Tier-1 seat(s) absent from the last' "$WORKSPACE/pass.out" \
-  || fail "pass case did not report a Tier-1 seat (the assertion may be vacuous)"
-echo "    ok: exit 0 and a Tier-1 seat was exercised"
+grep -q 'including 1 admitted member(s) and [1-9][0-9]* seated non-signer(s)' "$WORKSPACE/pass.out" \
+  || fail "pass case did not exercise an admitted member and a seated non-signer (the assertion may be vacuous)"
+echo "    ok: exit 0 with an admitted member and a seated non-signer exercised"
 
-echo "=== case 2/2: legacy evidence-score filter (expect non-zero)"
-node "$FIXTURE" "$FAIL_PORT" --drop-climber-reward >"$WORKSPACE/fail-server.log" 2>&1 &
+echo "=== case 2/2: admitted member unpaid (expect non-zero)"
+node "$FIXTURE" "$FAIL_PORT" --drop-admitted-reward >"$WORKSPACE/fail-server.log" 2>&1 &
 FAIL_SRV=$!
 wait_for_port "$FAIL_PORT" || fail "fixture server did not come up on $FAIL_PORT"
 FAIL_RC=$(run_case "$FAIL_PORT" "$WORKSPACE/fail.out")
 if [ "$FAIL_RC" = "0" ]; then
   cat "$WORKSPACE/fail.out" >&2
-  fail "test PASSED against the legacy filter -- the assertions have no teeth"
+  fail "test PASSED with the admitted member unpaid -- the assertions have no teeth"
 fi
 grep -q "$EXPECTED_ERROR" "$WORKSPACE/fail.out" \
   || { cat "$WORKSPACE/fail.out" >&2; fail "failed for the wrong reason (expected '$EXPECTED_ERROR')"; }
-echo "    ok: exit $FAIL_RC naming the unpaid Tier-1 climber"
+echo "    ok: exit $FAIL_RC naming the unpaid admitted member"
 
 echo "=== committee_rewards selftest PASSED"

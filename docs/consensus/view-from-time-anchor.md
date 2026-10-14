@@ -137,26 +137,28 @@ derive from `viewChangeVotes.maxToView` (phase 1 mechanism) in that case.
 
 ### 2. `ConsensusOperationalState`
 
-Add a sibling Option-wrapped field next to `recentSigners` in
-`modules/shared/src/main/scala/io/constellationnetwork/schema/ConsensusOperationalState.scala`:
+An Option-wrapped `recentRoundEndTimes` field lives in
+`modules/shared/src/main/scala/io/constellationnetwork/schema/ConsensusOperationalState.scala`.
+Current shape (the `recentSigners` window it was originally added next to was
+deleted with the tier machinery, ADR-0036, and `recentProofSizes` was renamed
+`recentCommitteeSizes`):
 
 ```scala
 final case class ConsensusOperationalState(
   perPeer: SortedMap[PeerId, PerPeerOperationalRecord],
-  recentProofSizes: SortedMap[SnapshotOrdinal, Int],
-  recentSigners: Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]] = None,
-  recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None
+  recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
+  recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None,
+  penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
 )
 ```
 
-Bounded window: keep last K ordinals (same K as `recentSigners`). On
-finalization, append `(ordinal -> consensusEndTime)` and prune outside the
-window.
+Bounded window: keep the last `tighteningWindow` ordinals. On finalization,
+append `(ordinal -> consensusEndTime)` and prune outside the window.
 
 ### 3. Consensus schema version bump
 
-This shipped at `consensusSchemaVersion` v19; the current value is 36
-(`config/types.scala:1018`). The schema value is folded into
+This shipped at `consensusSchemaVersion` v19; the live value is now 37
+(`config/types.scala`). The schema value is folded into
 `deterministicConfigHash`; that hash and the reported release-version hashes
 fence peer connections. The advertised jar hash is not compared
 (`consensus/declaration.scala:67-72` notes the field was `Option`-wrapped for
@@ -213,14 +215,13 @@ so `floor((now - parentEndTime) / viewInterval)` evaluated to >= 1 during the
 proposal phase on every round even though the round still finalized at view 0.
 At 60s, `floor(45/60) = 0`, the per-round VCV disappears, and a genuine ~120s
 stall still trips `timeView >= 2`. `viewInterval` is folded into
-`deterministicConfigHash` (`config/types.scala:980`, `viewIntervalMs=...`), so
+`deterministicConfigHash` (`config/types.scala`, `viewIntervalMs=...`), so
 divergent operator values reject each other at peer connection.
 
 There is NO `recent-round-end-times-window` config key. The retained-ordinals
-window is pinned in code to `tighteningWindow` (the same K as `recentSigners`;
-documented at `schema/ConsensusOperationalState.scala:150`, trimmed at
-`GlobalSnapshotConsensusStateAdvancer.scala:497-500`) and is not independently
-configurable.
+window is pinned in code to `tighteningWindow` (trimmed in
+`GlobalSnapshotConsensusStateAdvancer.scala` when the outcome is built) and is
+not independently configurable.
 
 No exponential backoff initially -- can be added after observing the simple
 version's failure modes. Aptos's Pacemaker uses adaptive backoff but they

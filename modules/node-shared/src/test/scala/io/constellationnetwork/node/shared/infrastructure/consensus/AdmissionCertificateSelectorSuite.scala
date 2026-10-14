@@ -13,14 +13,15 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 
 import weaver.FunSuite
 
-/** Pure-function coverage for the shared admission-certificate cap. Proposal construction uses entropy ranking; the unreachable over-cap
-  * apply defense intentionally retains legacy certificate ordering.
+/** Pure-function coverage for the shared admission-certificate cap. Proposal construction uses opportunity-index rotation; the unreachable
+  * over-cap apply defense intentionally retains legacy certificate ordering.
   *
   * Invariants under test:
   *   - the cap is `math.max(0, activeAdmissionMaxExpansionPerRound)` -- EXACTLY the limit `validateProposalAcs` enforces via
   *     `acs_too_many`, so a capped proposal can never be rejected for size
   *   - selection is deterministic under input-ordering permutations (two leaders building from the same assembled set must agree)
-  *   - the apply defense keeps lexicographic ordering while proposal construction uses entropy and prioritizes probation recovery
+  *   - the apply defense keeps lexicographic ordering while proposal construction rotates by opportunity index and prioritizes probation
+  *     recovery
   */
 object AdmissionCertificateSelectorSuite extends FunSuite {
 
@@ -119,12 +120,11 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
     expect.same(3, certificate.votes.toNonEmptyList.length) && expect.same(2, AdmissionCertificate.uniqueVoterCount(certificate))
   }
 
-  test("proposal selection is deterministic under permutations and rotates with entropy") {
-    val entropyCandidates = (1 to 64).map(i => Hash.fromBytes(s"proposal-entropy-$i".getBytes("UTF-8")))
-    val rotatingEntropy = entropyCandidates.find { entropy =>
-      AdmissionCertificateSelector.selectForProposal(all, 1, entropy).kept != List(certA)
+  test("proposal selection is deterministic under permutations and rotates with the opportunity index") {
+    val rotatingIndex = (0L until 16L).find { index =>
+      AdmissionCertificateSelector.selectForProposal(all, 1, index).kept != List(certA)
     }.get
-    val selections = all.permutations.map(AdmissionCertificateSelector.selectForProposal(_, 1, rotatingEntropy)).toList
+    val selections = all.permutations.map(AdmissionCertificateSelector.selectForProposal(_, 1, rotatingIndex)).toList
 
     expect(selections.nonEmpty) &&
     forEach(selections)(selection => expect.same(selections.head, selection)) &&
@@ -132,10 +132,10 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
   }
 
   test("proposal selection prioritizes probation recovery over open expansion") {
-    val entropy = Hash.fromBytes("probation-priority".getBytes("UTF-8"))
+    val index = 3L
     val probation = Set(certD.targetPeer)
     val selections = all.permutations
-      .map(AdmissionCertificateSelector.selectForProposal(_, 1, entropy, probation))
+      .map(AdmissionCertificateSelector.selectForProposal(_, 1, index, probation))
       .toList
 
     expect(selections.nonEmpty) &&
@@ -143,10 +143,10 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
   }
 
   test("atomic replacement partitions before cap and keeps an open ReadyAtTip certificate over probation") {
-    val entropy = Hash.fromBytes("replacement-open-priority".getBytes("UTF-8"))
+    val index = 5L
     val probation = Set(certD.targetPeer)
     val selections = all.permutations
-      .map(AdmissionCertificateSelector.selectOpenReadyForReplacement(_, 1, entropy, probation))
+      .map(AdmissionCertificateSelector.selectOpenReadyForReplacement(_, 1, index, probation))
       .toList
 
     expect(selections.nonEmpty) &&
@@ -159,12 +159,11 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
   }
 
   test("apply defense keeps its version-stable legacy ordering") {
-    val entropyCandidates = (1 to 64).map(i => Hash.fromBytes(s"proposal-entropy-$i".getBytes("UTF-8")))
-    val rotatingEntropy = entropyCandidates.find { entropy =>
-      AdmissionCertificateSelector.selectForProposal(all, 1, entropy).kept != List(certA)
+    val rotatingIndex = (0L until 16L).find { index =>
+      AdmissionCertificateSelector.selectForProposal(all, 1, index).kept != List(certA)
     }.get
 
     expect.same(List(certA), AdmissionCertificateSelector.select(all, 1).kept) &&
-    expect(AdmissionCertificateSelector.selectForProposal(all, 1, rotatingEntropy).kept != List(certA))
+    expect(AdmissionCertificateSelector.selectForProposal(all, 1, rotatingIndex).kept != List(certA))
   }
 }

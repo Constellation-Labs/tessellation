@@ -41,31 +41,21 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
   private def sample(perPeer: (PeerId, PerPeerOperationalRecord)*): ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.from(perPeer),
-      recentProofSizes = SortedMap(ord100 -> 3, ord200 -> 5),
-      recentSigners = SortedMap[SnapshotOrdinal, scala.collection.immutable.SortedSet[PeerId]](
-        ord100 -> scala.collection.immutable.SortedSet[PeerId](peerA, peerB)
-      ).some,
+      recentCommitteeSizes = SortedMap(ord100 -> 3, ord200 -> 5),
+      penaltyUntil = SortedMap[PeerId, SnapshotOrdinal](peerA -> ord200).some,
       recentRoundEndTimes = SortedMap(ord100 -> 1_700_000_000_000L).some
     )
 
   private val nonTrivial: ConsensusOperationalState = sample(
     peerA -> PerPeerOperationalRecord(
-      quality = (12, 15),
       removalPenalty = 2,
       cumulativeMissCount = 7L,
-      readmissionCountdown = 0,
-      deferralCountdown = 0,
-      viewChangesCaused = 4L.some,
-      tier = None
+      readmissionCountdown = 0
     ),
     peerB -> PerPeerOperationalRecord(
-      quality = (0, 8),
       removalPenalty = 0,
       cumulativeMissCount = 1L,
-      readmissionCountdown = 5,
-      deferralCountdown = 1,
-      viewChangesCaused = None,
-      tier = None
+      readmissionCountdown = 5
     )
   )
 
@@ -99,13 +89,9 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
     val sampleA = nonTrivial
     val sampleB = sample(
       peerB -> PerPeerOperationalRecord(
-        quality = (3, 3),
         removalPenalty = 0,
         cumulativeMissCount = 0L,
-        readmissionCountdown = 0,
-        deferralCountdown = 0,
-        viewChangesCaused = None,
-        tier = None
+        readmissionCountdown = 0
       )
     )
     for {
@@ -122,13 +108,9 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
     val first = nonTrivial
     val second = sample(
       peerA -> PerPeerOperationalRecord(
-        quality = (99, 99),
         removalPenalty = 0,
         cumulativeMissCount = 0L,
-        readmissionCountdown = 0,
-        deferralCountdown = 0,
-        viewChangesCaused = None,
-        tier = None
+        readmissionCountdown = 0
       )
     )
     for {

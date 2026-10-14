@@ -6,6 +6,8 @@ Date: 2026-06-30
 
 Accepted
 
+> Amended by [ADR-0036](0036-single-frozen-voting-set.md): certificate voters are the frozen round committee minus the target; there is no Core or witness pool.
+
 ## Context
 
 Between-round eviction (ADR-0018) needs a deterministic, fork-safe mechanism both to remove chronic non-signers and to re-admit peers whose penalty has expired.

@@ -12,20 +12,17 @@ rewards, and the proof signatures attached to a finalized snapshot.
 | Reward path | Validator recipient set | Does the current proof set select recipients? |
 |---|---|---|
 | Classic | `lastArtifact.proofs.map(_.id)` | Yes |
-| Delegated | Frozen round-start signing committee (currently Core + Tier 1) | No |
+| Delegated | Frozen round-start committee (`roundStartFacilitators`) | No |
 
-On the delegated path, Core and Tier-1 peers receive equal shares of the static
-validator pool. A peer does not lose its share because its signature arrived after
-finalization or because its evidence score is below the admission promote threshold.
-Evidence affects admission, tier assignment, leader eligibility, and future committee
-membership; it is not a second reward-eligibility filter.
+On the delegated path, every member of the frozen round committee receives an equal
+share of the static validator pool. A peer does not lose its share because its signature
+arrived after finalization. Since [ADR-0036](../adr/0036-single-frozen-voting-set.md)
+there are no tiers and no evidence scores: the frozen `roundStartFacilitators` passed by
+GL0 is the whole voting set, and membership changes only through the certified successor
+rule.
 
-Witness is an observation-only tier and does not earn. The current tier-transition
-path does not seat Witness peers in the active round, so the frozen
-`roundStartFacilitators` passed by GL0 is the Core + Tier-1 signing committee.
-
-The signature grace window is still important for finality evidence, participation
-history, demotion, diagnostics, and downstream consumers of `Signed` artifacts. It
+The signature grace window is still important for finality evidence, the certified
+commit evidence, diagnostics, and downstream consumers of `Signed` artifacts. It
 does not decide delegated validator payouts.
 
 ## Reward-path gates
@@ -79,7 +76,7 @@ The eight validator payouts observed at that point were caused by an evidence-sc
 filter introduced with the active-admission expansion work. One seated peer had score
 95, below `active-admission-promote-threshold = 100`, so the implementation paid eight
 committee peers. That was neither the classic reward path nor the intended
-all-Core-and-Tier-1 policy. The filter was later deleted together with its gate
+all-committee policy. The filter was later deleted together with its gate
 (ADR-0035 / #1627).
 
 ## Code path
@@ -97,5 +94,6 @@ all-Core-and-Tier-1 policy. The filter was later deleted together with its gate
    no periodic reward pool.
 
 When diagnosing a payout, compare the produced ordinal and epoch to both gates, then
-compare `peerHistory.controllerEvidence[ordinal - 1].roundStartFacilitators` with
+compare the committee certified for round `ordinal` (carried in snapshot `ordinal + 1`
+at `certifiedLineage.parentOutcome.proposalQc.value.roundStartFacilitators`) with
 `rewards`. Do not use top-level `proofs` as the expected delegated recipient set.

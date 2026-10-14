@@ -85,16 +85,10 @@ untrusted or permissionless recovery cohort.
 ## What the node does
 
 The rollback lead accepts only an incremental-snapshot rollback source and
-requires the loaded snapshot hash to equal the `run-rollback` hash exactly. If
-`CL_RECOVERY_CHECKPOINT_PATH` is also configured, the independently signed
-checkpoint must describe that same network, ordinal, and hash. These source,
-hash, checkpoint, public-key, and collateral checks run before rollback storage
-is mutated.
-
-`CL_RECOVERY_CHECKPOINT_PATH` is the pre-existing fork-anchor pin. It is not a
-committee recovery plan, does not name the recovery committee, and is not
-distributed to or signed by community validators. The sole committee override
-remains `CL_GL0_RECOVERY_SEED_COMMITTEE`.
+requires the loaded snapshot hash to equal the `run-rollback` hash exactly.
+These source, hash, public-key, and collateral checks run before rollback
+storage is mutated. The sole committee override is
+`CL_GL0_RECOVERY_SEED_COMMITTEE`.
 
 The lead then uses the existing typed `GlobalRecoverySeedOutcome.seed`
 constructor. The resulting outcome:
@@ -102,11 +96,13 @@ constructor. The resulting outcome:
 - contains the real signed anchor artifact, context, and ordinal-selected hash;
 - sets `facilitators` and `eligibleFacilitators` to the canonical environment
   committee;
-- clears removal, withdrawal, penalty, probation, tier, quality, signer, and
-  controller-evidence windows that could filter the operator-selected cohort;
-  and
-- seeds `recentProofSizes` with the selected committee size, matching rc.8's
+- clears removal, withdrawal, penalty, and probation state that could filter
+  the operator-selected cohort; and
+- seeds `recentCommitteeSizes` with the selected committee size, matching rc.8's
   canonical committee-size bootstrap semantics.
+
+(Before ADR-0036 the reseed also cleared tier, quality, signer and
+controller-evidence windows; those no longer exist.)
 
 Named validators download the real anchor normally, independently reconstruct
 that exact typed outcome, check collateral, and reject any different value.
@@ -183,8 +179,7 @@ Snapshot Streaming. The launch topology remains unchanged: one controlled
 
 Each re-armed start is a complete synthetic operational reseed, not merely a
 preferred-leader hint. It replaces the anchor proof committee with the selected
-set and clears the operational tier, penalty, probation, quality, signer, and
-controller-evidence windows listed above. Community membership and reward
+set and clears the operational penalty and probation state listed above. Community membership and reward
 breadth must therefore regrow from the selected cohort after every such start.
 
 An isolated external restart of one selected source while the variable remains
@@ -228,8 +223,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    and exit status. Confirm every node will start the same
    immutable release/version and effective `deterministicConfigHash`.
 5. Select a canonical **incremental** anchor by exact ordinal, hash, snapshot
-   content, state proof, and snapshot info—not by recency alone. If a signed
-   recovery checkpoint is configured, confirm it is the same anchor.
+   content, state proof, and snapshot info—not by recency alone.
 6. Select a viable, collateralized recovery cohort. For the normal source-node
    procedure, use all three controlled source PeerIds. Independently compare the
    exact environment value on all three machines.
@@ -259,7 +253,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    removing the env; it must download the canonical successor before community
    release.
 11. Keep community nodes and restart automation held while the source cohort
-   establishes next-seat headroom **and**, in the v35 epoch, public recovery
+   establishes next-seat headroom **and** public recovery
    durability. For a three-node IntegrationNet seed, headroom means one accepted
    snapshot with proofs from all three sources. Inspect that canonical accepted
    proof set directly. On every continuously running recovery-origin process,
@@ -284,7 +278,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    the terminal QC; repeated source loss/download failures may force-leave it.
    Do not restart-loop it or diagnose that as a broken source recovery. Hold it
    until `R+2` carries the successor QC publicly. Full-FSM automatic rejoin after
-   an early release remains a pre-activation test gate.
+   an early release remains a test gate before community release.
 12. Start or release all community nodes as ordinary `run-validator` processes
     with no recovery environment. Verify admission grows from the healthy base
     under rc.8's sustained-signing headroom gate.
@@ -445,17 +439,35 @@ condition.
 
 ## Compatibility with certified consensus
 
-A recovery anchor below activation is rejected at startup; there is no legacy
-engine to produce rounds below it. An anchor at or after activation starts a
-fresh certified epoch without a second operator artifact. For the mainnet
-v3.5 -> v4.1 cutover the anchor equals the activation key (`R = A`), and
-`fields-added-ordinals.tessellation-41-migration.mainnet = R+1`. The selected nodes still require exact env-derived
-outcome equality and the all-member barrier. The first successor's ordinary
-v35 QC then binds the public parent hash, network/domain, exact frozen
-committee, Core set, and proposal value. That QC is terminal/private at `R+1`;
-the public chain carries it at `R+2`. Do not release community validators or
-restart automation until the public-durability gauge confirms that second
-successor.
+This build has no pre-v35 Global L0 engine, so every rollback anchor, with or
+without the recovery seed, must be **at or after** the certified-consensus
+activation ordinal (`Main.validateRollbackAnchorAtOrAfterActivation`). Startup
+rejects an anchor below activation before rollback storage is touched. The first
+produced round is always `R+1`, and it is certified.
+
+At the mainnet v3.5 -> v4.1 cutover the anchor `R` is the final v3.5 snapshot and
+the activation ordinal is set to `R` itself
+(`snapshot.certified-consensus-activation-ordinal.mainnet = R`, with
+`fields-added-ordinals.tessellation-41-migration.mainnet = R+1`; see the comments
+in `dag-l0.conf`). Any later recovery uses an anchor `R' >= activation` and the
+same env flow. A certified-from-genesis chain additionally cannot use ordinal 1
+as the anchor (see above).
+
+The env flow starts a fresh certified epoch without a second operator artifact.
+The selected nodes still require exact env-derived outcome equality and the
+all-member barrier. The first successor's ordinary v35 QC then binds the public
+parent hash, network/domain, exact frozen committee, and proposal value. That QC
+is terminal/private at `R+1`; the public chain carries it at `R+2`. Do not release
+community validators or restart automation until the public-durability gauge
+confirms that second successor.
+
+> **FIRST-ROUND TRAP:** If `R+1` never finalizes, the public tip stays at `R`.
+> Recover again from the same anchor `R` (it is still `>= activation`) after
+> fixing the cause; do not pick an earlier anchor, which startup rejects. If `R+1`
+> finalized on the sources but `R+2` never carried its QC, treat `R+1` as
+> source-private: either recover from `R` again or, when every source holds the
+> same `R+1`, from `R+1`. Rehearse this path with Snapshot Streaming
+> reconciliation before announcing the activation ordinal.
 
 > **Historical (removed in #1627):** the former activation-boundary trap
 > (recovery seeds at `A-1`/`A-2` rejected, recover at or before `A-3` and rebuild
@@ -465,10 +477,10 @@ successor.
 The live cluster's version, deterministic-config, and allowance hashes remain
 mandatory join fences. They authenticate which implementation may participate
 in the current session; they are not historical policy identifiers. Each v35 QC
-instead authenticates its current full/Core authority, the exact
+instead authenticates its current frozen-committee authority, the exact
 `nextRoundAuthority`, and the post-round operational-state commitment. A fresh
 node verifies those effects with the fixed BFT floor and never applies today's
-quorum fraction, Core sizing, seedlist, allowance, or collateral rules to an old
+quorum fraction, seedlist, allowance, or collateral rules to an old
 round. A future change to the meaning or safety rules of those signed fields
 requires a new schema/activation rather than a SemVer interpretation of v35.
 
@@ -478,8 +490,7 @@ canonical root from that child's QC plus the independently validated public
 parent, and replays the contiguous reset-to-tip segment through the ordinary
 QC and artifact-proof validators. It needs neither the env, a signed recovery
 plan, a private recovery artifact, nor the seedlist that happened to be current
-when the reset occurred. A committee of fewer than three, a Core set different
-from the complete recovery committee, a mismatched parent, an invalid or
+when the reset occurred. A committee of fewer than three, a mismatched parent, an invalid or
 under-floor QC, invalid artifact proofs, broken authority continuity, or a
 non-identical terminal operational-state commitment fails closed. Repeated
 recoveries supersede older epochs: only the latest publicly certified reset-to-

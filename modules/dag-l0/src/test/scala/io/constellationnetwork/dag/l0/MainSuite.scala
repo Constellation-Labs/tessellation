@@ -5,7 +5,7 @@ import cats.effect.IO
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.cli.method
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoverySeedCommittee, RecoveryCheckpoint}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensusGenesis
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.RollbackStartPolicy
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -23,12 +23,6 @@ object MainSuite extends SimpleIOSuite {
   private val self: PeerId = PeerId(Hex("aa" * 64))
   private val peerB: PeerId = PeerId(Hex("bb" * 64))
   private val peerC: PeerId = PeerId(Hex("cc" * 64))
-
-  private val recoveryAnchor = RecoveryCheckpoint(
-    network = "integrationnet",
-    ordinal = SnapshotOrdinal.unsafeApply(1234L),
-    snapshotHash = Hash("11" * 32)
-  )
 
   pureTest("rollback bootstrap preserves snapshot proof signers when self signed the checkpoint") {
     val signers = List(peerB, self, peerC)
@@ -80,7 +74,7 @@ object MainSuite extends SimpleIOSuite {
 
   pureTest("ordinary rollback preserves operational history while a recovery seed flushes it") {
     val restored = ConsensusOperationalState.empty.copy(
-      recentProofSizes = SortedMap(SnapshotOrdinal.unsafeApply(100L) -> 7)
+      recentCommitteeSizes = SortedMap(SnapshotOrdinal.unsafeApply(100L) -> 7)
     )
 
     expect.same(restored, Main.rollbackOperationalSeed(restored, recoveryOverrideActive = false)) &&
@@ -138,16 +132,6 @@ object MainSuite extends SimpleIOSuite {
     expect.same(
       Set(SnapshotOrdinal.unsafeApply(futureActivation)),
       Main.protectedCertifiedSnapshotInfoOrdinals(futureActivation)
-    )
-  }
-
-  pureTest("an unsigned recovery seed is bound to the same independent checkpoint comparison") {
-    expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, None).isRight) &&
-    expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, Some(recoveryAnchor)).isRight) &&
-    expect(
-      Main
-        .validateRecoverySeedAnchorCompatibility(recoveryAnchor.copy(snapshotHash = Hash("44" * 32)), Some(recoveryAnchor))
-        .isLeft
     )
   }
 

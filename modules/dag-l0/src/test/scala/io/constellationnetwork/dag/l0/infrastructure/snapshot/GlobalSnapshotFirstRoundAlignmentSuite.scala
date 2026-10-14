@@ -37,13 +37,11 @@ object GlobalSnapshotFirstRoundAlignmentSuite extends SimpleIOSuite {
   pureTest("normal first-round committee stays disabled during true bootstrap") {
     val bootstrap = GlobalSnapshotConsensus.normalFirstRoundCommittee(
       List(peerA, peerB),
-      recentProofSizes = List(1, 2, 2),
-      bootstrapCompleteProofsThreshold = 3
+      recentCommitteeSizes = List(1, 2, 2)
     )
     val established = GlobalSnapshotConsensus.normalFirstRoundCommittee(
       List(peerB, peerA),
-      recentProofSizes = List(1, 3),
-      bootstrapCompleteProofsThreshold = 3
+      recentCommitteeSizes = List(1, 3)
     )
 
     expect(bootstrap.isEmpty) && expect.same(Some(SortedSet(peerA, peerB)), established)

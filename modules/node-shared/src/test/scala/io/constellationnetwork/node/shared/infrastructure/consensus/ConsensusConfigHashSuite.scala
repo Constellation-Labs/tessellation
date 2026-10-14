@@ -8,29 +8,8 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 import weaver.SimpleIOSuite
 
-/** Locks in the v20 `coreCommitteeSize` participation in `deterministicConfigHash`.
-  *
-  * ==Why this suite exists==
-  *
-  * Pre-v20 `SnapshotConfig.coreCommitteeSize: Map[AppEnvironment, PosInt]` was env-keyed and resolved at the consensus construction site
-  * without participating in the hash. Two operators with divergent Core size values would compute different Core committees (the LIVENESS
-  * quorum denominator) but compute IDENTICAL `deterministicConfigHash` values, so their Facility messages would carry matching `configHash`
-  * and they would proceed to silently fork.
-  *
-  * v20 routes the env-resolved value through `ConsensusConfig.coreCommitteeSize: Option[Int]` (populated by `GlobalSnapshotConsensus` /
-  * `CurrencySnapshotConsensus` at the construction site) and folds it into the hash. Honest operators with divergent Core size values now
-  * compute different hashes and handshake-reject before any consensus state is exchanged.
-  *
-  * This suite asserts the invariant directly on `ConsensusConfig.deterministicConfigHash`:
-  *
-  *   - Same Core size -> same hash (positive case);
-  *   - Different Core size -> different hash (regression-guard);
-  *   - Absent vs `Some(3)` -> same hash (back-compat: the `None` default is treated as `3`, matching the pre-v20 `getOrElse(3)`
-  *     resolution).
-  *
-  * The "different env -> different hash because Core size differs by env" case is established by the same mechanism: the construction site
-  * resolves the value differently per env (via `SnapshotConfig.coreCommitteeSize.get(env)`), so the resulting `ConsensusConfig` has
-  * different `coreCommitteeSize` values and therefore different hashes. We assert that programmatically.
+/** Pins which ConsensusConfig fields feed `deterministicConfigHash`. Consensus-critical knobs must change the hash so divergent operator
+  * values are rejected at the L0 join fence; timing-only knobs must not.
   */
 object ConsensusConfigHashSuite extends SimpleIOSuite {
 
@@ -52,49 +31,15 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
       eventCutter = eventCutter
     )
 
-  pureTest("schema v36 golden: the default deterministicConfigHash is pinned") {
+  pureTest("schema v37 golden: the default deterministicConfigHash is pinned") {
     // Re-approve deliberately whenever a deterministicConfigHash input or consensusSchemaVersion changes.
-    expect.same(36, baseConfig.consensusSchemaVersion) &&
-    expect.same("5240746a5033f805a57529448c4a4a5306cd2f8abe1c066c74a0a147190d4f31", baseConfig.deterministicConfigHash.value)
+    expect.same(37, baseConfig.consensusSchemaVersion) &&
+    expect.same("7aceffe3e851a67fa059f8ca410c52e21196c09f16ee2ef0d98994c15e6c0ff8", baseConfig.deterministicConfigHash.value)
   }
 
-  pureTest("same coreCommitteeSize -> identical deterministicConfigHash") {
-    val a = baseConfig.copy(coreCommitteeSize = Some(5))
-    val b = baseConfig.copy(coreCommitteeSize = Some(5))
-    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
-  }
-
-  pureTest("different coreCommitteeSize -> different deterministicConfigHash") {
-    val testnetLike = baseConfig.copy(coreCommitteeSize = Some(5))
-    val mainnetLike = baseConfig.copy(coreCommitteeSize = Some(15))
-    expect(testnetLike.deterministicConfigHash != mainnetLike.deterministicConfigHash)
-  }
-
-  pureTest("None coreCommitteeSize matches Some(3) (back-compat with pre-v20 getOrElse(3))") {
-    val absent = baseConfig.copy(coreCommitteeSize = None)
-    val explicit = baseConfig.copy(coreCommitteeSize = Some(3))
-    expect.same(absent.deterministicConfigHash, explicit.deterministicConfigHash)
-  }
-
-  pureTest("dev (3) vs testnet (5) -> different hash (env-resolved divergence rejected at handshake)") {
-    val devConfig = baseConfig.copy(coreCommitteeSize = Some(3))
-    val testnetConfig = baseConfig.copy(coreCommitteeSize = Some(5))
-    expect(devConfig.deterministicConfigHash != testnetConfig.deterministicConfigHash)
-  }
-
-  pureTest("testnet (5) vs mainnet (15) vs integrationnet (9) -> three distinct hashes") {
-    val t = baseConfig.copy(coreCommitteeSize = Some(5)).deterministicConfigHash
-    val m = baseConfig.copy(coreCommitteeSize = Some(15)).deterministicConfigHash
-    val i = baseConfig.copy(coreCommitteeSize = Some(9)).deterministicConfigHash
-    expect(t != m).and(expect(t != i)).and(expect(m != i))
-  }
-
-  pureTest("regression marker: divergent Core size between operators is detected before consensus") {
-    // Operator A configures Core=5, operator B configures Core=6 by accident. Pre-v20 both would
-    // produce the same hash and their Facility messages would interoperate; the fork would emerge
-    // downstream when their Core committee derivations diverged. v20 catches this at handshake.
-    val operatorA = baseConfig.copy(coreCommitteeSize = Some(5))
-    val operatorB = baseConfig.copy(coreCommitteeSize = Some(6))
+  pureTest("divergent quorum threshold between operators is detected before consensus") {
+    val operatorA = baseConfig.copy(quorumThresholdFraction = 2.0 / 3.0)
+    val operatorB = baseConfig.copy(quorumThresholdFraction = 0.75)
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
   }
 
@@ -121,14 +66,10 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(short.deterministicConfigHash != long.deterministicConfigHash)
   }
 
-  pureTest("tier1SignatureGracePeriod is NOT in deterministicConfigHash (timing-only, same as signatureGracePeriod)") {
-    // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
-    // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same
-    // downstream hash and must NOT enter the config hash (otherwise honest operators with different
-    // timing would needlessly handshake-reject). This guards the documented treatment.
-    val a = baseConfig.copy(tier1SignatureGracePeriod = 750.milliseconds, signatureGracePeriod = 3.seconds)
-    val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
-    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  pureTest("signatureGracePeriod is in deterministicConfigHash (it bounds the certified commit evidence)") {
+    val a = baseConfig.copy(signatureGracePeriod = 3.seconds)
+    val b = baseConfig.copy(signatureGracePeriod = 500.milliseconds)
+    expect(a.deterministicConfigHash != b.deterministicConfigHash)
   }
 
   pureTest("EventTrigger batching and cooldown are NOT in deterministicConfigHash (local scheduling only)") {

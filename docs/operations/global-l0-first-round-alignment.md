@@ -270,10 +270,11 @@ snapshot or consensus decision:
   newer download did or did not supersede a stale older-key hold.
 
 Existing generic gate-held, dropped-trigger, stale-release, and recovery-seed
-metrics remain in force. Existing `dag_consensus_committee_core_size` and
-`dag_consensus_committee_tier_size` expose the derived Core/Tier-1 composition
-when the released state is materialized; the normal expected-committee gauge
-is the pre-release full-set signal.
+metrics remain in force. `dag_consensus_committee_size` exposes the frozen
+voting-set size when the released state is materialized (the former
+`dag_consensus_committee_core_size` / `dag_consensus_committee_tier_size`
+gauges were removed with the tier model, ADR-0036); the normal
+expected-committee gauge is the pre-release full-set signal.
 
 ## Compatibility and follow-up
 

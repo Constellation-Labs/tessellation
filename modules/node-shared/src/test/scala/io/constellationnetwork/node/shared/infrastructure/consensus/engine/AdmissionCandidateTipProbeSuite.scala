@@ -28,7 +28,6 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
   private def ordinal(value: Long): SnapshotOrdinal = SnapshotOrdinal.unsafeApply(value)
   private val expectedHash = Hash("expected")
   private val differentHash = Hash("different")
-  private val rendezvousEntropy = Hash("ab" * 32)
 
   private def facility(
     ordinalValue: Long = 100L,
@@ -290,8 +289,8 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
     val first = PeerId(Hex("01" * 64))
     val second = PeerId(Hex("02" * 64))
     val third = PeerId(Hex("03" * 64))
-    val forward = AdmissionCandidateTipProbe.probationTargetForRound(List(first, second, third).toSet, rendezvousEntropy)
-    val reverse = AdmissionCandidateTipProbe.probationTargetForRound(List(third, second, first).toSet, rendezvousEntropy)
+    val forward = AdmissionCandidateTipProbe.probationTargetForRound(List(first, second, third).toSet, 42L)
+    val reverse = AdmissionCandidateTipProbe.probationTargetForRound(List(third, second, first).toSet, 42L)
 
     IO.pure(expect(forward.nonEmpty) && expect.same(forward, reverse))
   }

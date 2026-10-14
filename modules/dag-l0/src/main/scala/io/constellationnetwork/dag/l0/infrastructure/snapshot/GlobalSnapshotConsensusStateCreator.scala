@@ -30,7 +30,6 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -125,13 +124,6 @@ object GlobalSnapshotConsensusStateCreator {
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
-    localHealthMonitor: LocalHealthMonitor[F],
-    // v19 multi-committee floor for the Core committee. The Core committee is the
-    // active LIVENESS quorum -- quorum threshold is computed against
-    // `coreFacilitators.value.size`, NOT the full round-start committee. If Tier 2
-    // (carried-forward) peers fall below this floor, CommitteeBuilder deterministically
-    // promotes Tier 1 peers (lexicographic-sorted by PeerId hex) until the floor is met.
-    coreCommitteeSize: Int,
     evictionVoter: EvictionVoter[F, GlobalSnapshotKey],
     consensusQueue: Queue[
       F,
@@ -152,8 +144,9 @@ object GlobalSnapshotConsensusStateCreator {
       * and in the exact dead band where the current committee remains finalizable but one additional seat is unsupported.
       *
       * The local proof subset, monotonic time, and resulting headroom decision are evidence for local vote emission only. They never enter
-      * the outcome, artifact, committee hash, or state proof. The Core-quorum EvictionCertificate has no standalone removal authority on
-      * this path: it must be paired one-for-one with a Core-quorum open ReadyAtTip AdmissionCertificate in the certified ProposalValue.
+      * the outcome, artifact, committee hash, or state proof. The committee-quorum EvictionCertificate has no standalone removal authority
+      * on this path: it must be paired one-for-one with a committee-quorum open ReadyAtTip AdmissionCertificate in the certified
+      * ProposalValue.
       */
     private def auditSigningFinalityParticipation(
       key: GlobalSnapshotKey,
@@ -164,18 +157,18 @@ object GlobalSnapshotConsensusStateCreator {
       observedAt: FiniteDuration,
       cadenceAllowed: Boolean
     ): F[F[Unit]] = {
-      val parentEvidence = lastOutcome.controllerEvidence.flatMap(_.get(lastOutcome.key))
+      // Parent round committee from the certified parent QC, not from controller evidence.
+      val parentRoundCommittee = lastOutcome.certifiedRoundCommittee
       val locallyObservedParentSigners =
         lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
       val inBootstrap =
-        !lastOutcome.recentProofSizes.values.exists(_ >= consensusConfig.bootstrapCompleteProofsThreshold)
+        !BootstrapCommittee.reached(lastOutcome.recentCommitteeSizes.values)
       val outcomeLabel = Metrics.unsafeLabelName("outcome")
 
-      parentEvidence match {
+      parentRoundCommittee match {
         case None =>
-          // Recovery from a snapshot whose one-round operational sidecar is unavailable can
-          // temporarily lack the exact parent round-start committee. Clear local streaks and
-          // skip rather than bridging an unknown round into a false consecutive-miss sequence.
+          // The recovery-seed root has no certified parent round. Clear local streaks and skip rather than bridging an
+          // unknown round into a false consecutive-miss sequence.
           (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
             Metrics[F]
               .incrementCounter(
@@ -184,7 +177,7 @@ object GlobalSnapshotConsensusStateCreator {
               )
               .whenA(!inBootstrap && currentCore.contains(selfId))).as(Sync[F].unit)
 
-        case Some(evidence) =>
+        case Some(parentCommittee) =>
           val currentCommittee = currentSigningCommittee
           val finalityHeadroom = FinalityHeadroom.evaluate(
             currentCommittee,
@@ -193,7 +186,7 @@ object GlobalSnapshotConsensusStateCreator {
           )
           val requiredMissDuration = FinalityParticipationAuditor.minimumMissDuration(
             consensusConfig.timeTriggerInterval,
-            TierTransitions.DemotionConsecutiveMisses
+            FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses
           )
           val recordHeadroom =
             (Metrics[F].updateGauge(
@@ -242,10 +235,11 @@ object GlobalSnapshotConsensusStateCreator {
               selfId,
               currentCore,
               currentSigningCommittee,
-              evidence.roundStartFacilitators.toSet,
+              parentCommittee,
               locallyObservedParentSigners,
               lastOutcome.key.value.value,
               lastOutcome.finished.snapshotHash,
+              DeterministicRotation.opportunityIndex(key.value.value, config.activeAdmissionExpansionIntervalRounds),
               observedAt,
               requiredMissDuration,
               inBootstrap,
@@ -398,21 +392,7 @@ object GlobalSnapshotConsensusStateCreator {
         certifiedNextRoundAuthority = lastOutcome.finished.certifiedOutcome
           .map(_.proposalQc.value.nextRoundAuthority)
         certifiedRoundProjection = certifiedNextRoundAuthority.map { authority =>
-          val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(
-            key = key,
-            authority = authority,
-            parentRecentSigners = lastOutcome.recentSigners,
-            parentControllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-            parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
-              activeScores = lastOutcome.activeAdmissionScores.toMap,
-              peerQuality = lastOutcome.peerQuality.toMap,
-              peerTiers = lastOutcome.peerTiers,
-              viewChanges = lastOutcome.peerViewChanges.toMap,
-              selfHealth = lastOutcome.peerSelfHealth.toMap
-            ),
-            config = config,
-            coreCommitteeSize = coreCommitteeSize
-          )
+          val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(key, authority, config)
 
           authority.facilitators.toSortedSet.toList -> committee
         }
@@ -427,10 +407,9 @@ object GlobalSnapshotConsensusStateCreator {
         // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
         // convergence; nomination alone is not membership authority. Only a quorum-certified
         // admission may change this base.
-        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
-          parentFacilitators = lastOutcome.facilitators.value,
-          seedlistPeerIds = seedlistPeerIds
-        )
+        fullBase = lastOutcome.facilitators.value
+          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
+          .distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
@@ -459,11 +438,8 @@ object GlobalSnapshotConsensusStateCreator {
 
         // Multi-round removal penalty (the security tier of the eligibility pipeline). Peers
         // evicted via consensus-witnessed fork-eviction stay excluded for `removalPenaltyRounds`
-        // rounds before they can re-enter at all. v19 cleanup: this is the ONLY behavioural
-        // filter remaining; chronic-non-signer / prior-round-missing / tightening-window /
-        // candidate-deferral filters were retired in favour of CommitteeBuilder's tier-aware
-        // partition (peers with degraded peerQuality land in Tier 1, still sign, no longer
-        // gate the liveness quorum). Deterministic: derived from consensus-agreed lastOutcome.
+        // rounds before they can re-enter at all. This is the only behavioural filter; there is
+        // no score or tier partition. Deterministic: derived from consensus-agreed lastOutcome.
         // Stage 4 cert-anchored penalties: a peer with `penaltyUntil(peer) > key` is excluded
         // by pure ordinal comparison against the consensus-agreed key -- no per-round countdown
         // that a restart could observe half-decremented. Unioned into `penalizedPeers` so the
@@ -508,19 +484,6 @@ object GlobalSnapshotConsensusStateCreator {
           lastOutcome.readmissionCountdown.count { case (_, countdown) => countdown == 0 }.toLong
         )
 
-        // Per-peer quality gauges (Prometheus). With v19 cleanup, the quality-degradation
-        // override in CommitteeBuilder demotes peers with cumulative ratio < minRatio to Tier 1,
-        // so these gauges remain the key operator signal for "who's drifting toward Tier 1?"
-        peerIdLabel = Metrics.unsafeLabelName("peer_id")
-        _ <- lastOutcome.peerQuality.toList.traverse_ {
-          case (pid, (completed, participated)) =>
-            val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
-            val pidTag: Metrics.TagSeq = Seq((peerIdLabel, pid.value.value.take(8)))
-            Metrics[F].updateGauge("dag_consensus_peer_quality_ratio", ratio, pidTag) >>
-              Metrics[F].updateGauge("dag_consensus_peer_quality_participated", participated.toLong, pidTag) >>
-              Metrics[F].updateGauge("dag_consensus_peer_quality_completed", completed.toLong, pidTag)
-        }
-
         // Clear the abandoned-missing tracker every round (local-only state, never used for
         // exclusion -- the deterministic mechanisms above cover unresponsive peers).
         abandonedMissing <- peerQualityTracker.getAndClearAbandonedMissingPeers
@@ -537,13 +500,7 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
-        // Eligibility: penalty + probation are the only behavioural gates. Everything else
-        // that was previously filtered out (chronic non-signers, prior-round-missing,
-        // tightening-window exclusions, new-peer deferrals) is now handled at CommitteeBuilder
-        // by partitioning into Core / Tier 1 / Witness rather than excluding -- Tier 1 peers
-        // sign and earn but do not count toward the Core liveness quorum, so chronic peers cannot
-        // wedge leader/VC certificate progress by being absent. The separate frozen-committee
-        // finality floor remains unchanged. The final allEligible fallback preserves rc.6's
+        // Eligibility: penalty + probation are the only behavioural gates. The final allEligible fallback preserves rc.6's
         // last-resort probation bypass; it is safe only when anchor preflight proves a viable
         // non-probation first-round committee and therefore never reaches that rung.
         eligibleThisRound = {
@@ -558,49 +515,22 @@ object GlobalSnapshotConsensusStateCreator {
           }
         }
 
-        // Apply deterministic subset selection using hash-distance ordering
-        // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
+        // No-certified-parent path (genesis): deterministic PeerId order within the configured cap, no hash input.
         selectedFacilitators = certifiedRoundProjection
           .map(_._1)
-          .getOrElse(facilitatorSelector.select(eligibleThisRound, entropy))
+          .getOrElse(facilitatorSelector.getMaxCount.fold(eligibleThisRound.sorted)(cap => eligibleThisRound.sorted.take(cap)))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
         membershipProjection = certifiedRoundProjection.fold(
           CertifiedRoundCommitteeProjector.project(
             key = key,
             selectedFacilitators = selectedFacilitators,
-            recentSigners = lastOutcome.recentSigners,
-            controllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-            carried = CertifiedRoundCommitteeProjector.CarriedControllerState(
-              activeScores = lastOutcome.activeAdmissionScores.toMap,
-              peerQuality = lastOutcome.peerQuality.toMap,
-              peerTiers = lastOutcome.peerTiers,
-              viewChanges = lastOutcome.peerViewChanges.toMap,
-              selfHealth = lastOutcome.peerSelfHealth.toMap
-            ),
-            config = config,
-            coreCommitteeSize = coreCommitteeSize,
-            forcedTier1Peers = Set.empty,
-            // Buffered withdrawal rumors are not certified and can arrive before state creation on one node but after it on
-            // another. The frozen round-start/QC committee therefore ignores that local timing input.
-            withdrawnPeers = Set.empty
+            config = config
           )
         )(_._2)
-        admissionSizing = membershipProjection.admissionSizing
         expansionAllowedThisRound = membershipProjection.expansionAllowed
         maxExpansionThisRound = membershipProjection.maxExpansionThisRound
-        controllerInputs = membershipProjection.controllerInputs
-        activeAdmission = membershipProjection.activeAdmission
-        signingMembership = membershipProjection.signingMembership
-        activeFacilitators = signingMembership.retained
-        committees = membershipProjection.committees
-        signingFacilitators = membershipProjection.signingFacilitators
-        _ <- logger.debug(
-          s"Controller inputs for key=$key: " + (
-            if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
-            else s"controller_evidence=${controllerInputs.evidenceRounds} rounds"
-          )
-        )
+        signingFacilitators = membershipProjection.votingCommittee
         _ <- ConsensusLog
           .info(
             logger,
@@ -611,251 +541,19 @@ object GlobalSnapshotConsensusStateCreator {
             "allEligible" -> allEligible.size.toString,
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "selected" -> selectedFacilitators.size.toString,
-            "active" -> activeFacilitators.size.toString,
-            "coreEligible" -> activeAdmission.active.size.toString,
-            "retainedAsTier1" -> signingMembership.nonCore.size.toString,
-            "activeTarget" -> activeAdmission.targetSize.toString,
-            "activeCandidates" -> activeAdmission.candidateSize.toString,
-            "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
-            "scoreExcluded" -> activeAdmission.scoreExcludedSize.toString,
-            "qualityExcluded" -> activeAdmission.qualityExcludedSize.toString,
-            "demotedRecentSigners" -> activeAdmission.demotedRecentSignerSize.toString,
-            "belowRetainRecentSigners" -> activeAdmission.belowRetainRecentSignerSize.toString,
-            "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
-            "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
-            "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
-            "probationAdmitted" -> activeAdmission.probationAdmittedSize.toString,
-            "stickyProbationCandidates" -> activeAdmission.stickyProbationCandidateSize.toString,
-            "freshProbationCandidates" -> activeAdmission.freshProbationCandidateSize.toString,
-            "freshProbationStarved" -> activeAdmission.freshProbationStarved.toString,
-            "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
-            "recentSignerMinCount" -> activeAdmission.recentSignerMinCount.toString,
-            "recentSignerMaxCount" -> activeAdmission.recentSignerMaxCount.toString,
+            "votingCommittee" -> signingFacilitators.size.toString,
             "expansionIntervalRounds" -> expansionIntervalRounds.toString,
-            "expansionAllowed" -> expansionAllowedThisRound.toString,
-            "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
-            "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
+            "expansionAllowed" -> expansionAllowedThisRound.toString
           )
-          .whenA(selectedFacilitators.size < allEligible.size || activeAdmission.exclusions.nonEmpty)
-
-        admissionReasonLabel = Metrics.unsafeLabelName("reason")
-        admissionDecisionLabel = Metrics.unsafeLabelName("decision")
-        _ <- activeAdmission.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_active_facilitator_admission_total",
-                exclusions.size,
-                Seq(
-                  admissionDecisionLabel -> "excluded",
-                  admissionReasonLabel -> reason
-                )
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_expansion_admitted_total",
-          activeAdmission.expansionAdmittedSize,
-          Seq.empty
-        )
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_reserve_admitted_total",
-          activeAdmission.reserveAdmittedSize,
-          Seq.empty
-        )
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_admission_total",
-          activeAdmission.probationAdmittedSize,
-          Seq(
-            admissionDecisionLabel -> "admitted",
-            admissionReasonLabel -> "probation"
-          )
-        )
-        _ <- activeAdmission.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_active_facilitator_expansion_excluded_total",
-                exclusions.size,
-                Seq(admissionReasonLabel -> reason)
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_admission_total",
-          activeFacilitators.size,
-          Seq(
-            admissionDecisionLabel -> "admitted",
-            admissionReasonLabel -> "selected_pool"
-          )
-        )
+          .whenA(selectedFacilitators.size < allEligible.size)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_promoted_candidate_size",
-          activeAdmission.promotedCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_core_eligible_size", activeAdmission.active.size.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_tier1_retained_size", signingMembership.nonCore.size.toLong)
-        _ <- Metrics[F]
-          .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_sticky_probation_candidate_size",
-          activeAdmission.stickyProbationCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_fresh_probation_candidate_size",
-          activeAdmission.freshProbationCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_fresh_probation_starved",
-          if (activeAdmission.freshProbationStarved) 1L else 0L
-        )
-        _ <- Metrics[F]
-          .updateGauge("dag_consensus_active_facilitator_reserve_admitted_size", activeAdmission.reserveAdmittedSize.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_min_count", activeAdmission.recentSignerMinCount.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_max_count", activeAdmission.recentSignerMaxCount.toLong)
-        activeExclusionCounts = activeAdmission.exclusions.groupMapReduce(_.reason.label)(_ => 1)(_ + _)
-        _ <- List(
-          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.MissedLatestRound
-        ).traverse_ { reason =>
-          Metrics[F].updateGauge(
-            "dag_consensus_active_facilitator_blocker_size",
-            activeExclusionCounts.getOrElse(reason.label, 0).toLong,
-            Seq(admissionReasonLabel -> reason.label)
-          )
-        }
+        _ <- Metrics[F].updateGauge("dag_consensus_committee_size", signingFacilitators.size.toLong)
 
         time <- Clock[F].monotonic
 
-        // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
-        // using the stage-4 controller inputs (evidence-derived tiers + quality when the
-        // signed controllerEvidence window has entries; the carried-forward lastOutcome maps
-        // only in the empty-window fallback). Tier assignment rule (re-derived every round):
-        //   1. Quality-degradation override -- any peer with observed `participated >=
-        //      minParticipationObservations` AND `completed/participated < minParticipationRatio`
-        //      is forced to Tier 1, even if `priorTiers` says Core. Structural protection so a
-        //      chronic-but-classified peer cannot gate liveness; recovers on its own next round
-        //      if the ratio climbs back above the bar.
-        //   2. Carried-forward classification from `priorTiers`.
-        //   3. Quality-proven bootstrap -- new joiners (absent from `priorTiers`) land in Core
-        //      iff their `peerQuality` shows them above the ratio bar with enough observations.
-        //   4. Default Tier 1 -- new peers without proven participation join the witness pool,
-        //      NOT the liveness quorum. Replaces the original "everyone defaults to Core"
-        //      bootstrap that let chronic-but-unclassified peers wedge the cluster.
-        // Core-floor promotion then tops Core up to `coreCommitteeSize` by ranking the Tier 1
-        // pool on `peerQuality` (descending ratio, descending completed, then PeerId lex).
-        // At genesis (empty `peerQuality`) ranking collapses to pure lex order so the cluster
-        // bootstraps deterministically from scratch.
-        // Chronic-core replacement ladder: `chronicMisses` (evidence-derived trailing miss
-        // streaks, empty in the fallback regime) bars chronically-missing peers from Core,
-        // swaps them for the highest-scored non-chronic reserves, prefers a smaller Core over
-        // chronic padding when supply is short, and re-admits the least-bad chronic peers only
-        // below MinViableCoreSize. See the CommitteeBuilder scaladoc for the full ladder.
-        _ <- logger
-          .info(
-            s"Chronic core replacement at key=$key: " +
-              s"excluded=${committees.chronicExcluded.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")} " +
-              s"replacements=${committees.chronicReplacements.map(_.value.value.take(8)).mkString(",")} " +
-              s"readmitted=${committees.chronicReadmitted.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")}"
-          )
-          .whenA(committees.chronicExcluded.nonEmpty || committees.chronicReadmitted.nonEmpty)
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_chronic_core_replacement_total",
-          committees.chronicReplacements.size,
-          Seq.empty
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_chronic_core_excluded_size", committees.chronicExcluded.size.toLong)
-
-        _ <- ConsensusLog.info(
-          logger,
-          Facilitator,
-          key.show,
-          "n/a",
-          FacilitatorsFinalized,
-          "core" -> committees.core.size.toString,
-          "tier1" -> committees.tier1.size.toString,
-          "witness" -> committees.witness.size.toString,
-          "coreFloor" -> coreCommitteeSize.toString
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_committee_core_size", committees.core.size.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_committee_tier_size",
-          committees.core.size.toLong,
-          Seq(Metrics.unsafeLabelName("tier") -> "core")
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_committee_tier_size",
-          committees.tier1.size.toLong,
-          Seq(Metrics.unsafeLabelName("tier") -> "tier1")
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_committee_tier_size",
-          committees.witness.size.toLong,
-          Seq(Metrics.unsafeLabelName("tier") -> "witness")
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_committee_core_floor", coreCommitteeSize.toLong)
-
-        // Quality-weighted leader selection: use consensus-agreed quality scores
-        // so all nodes compute the same leader deterministically.
-        // Pass raw (completed, participated) integers -- the selector uses integer-only
-        // tier computation (tier = participated - completed = failure count) to avoid
-        // platform-dependent float-to-long conversion differences.
-        //
-        // v19: leader selection draws ONLY from the Core committee. Tier 1 and Witness
-        // peers are not eligible to lead -- they observe and witness, but the LIVENESS
-        // quorum is gated on Core. This makes Core both the quorum denominator and the
-        // leader pool, so a peer that loses its Core seat also loses its ability to lead.
-        //
-        // Graduation filter (unchanged from v18): restrict the leader pool to peers with
-        // `participated >= minParticipationObservations` AND `completed >= 1` in the
-        // consensus-agreed peerQuality outcome. The graduated pool must contain at least
-        // 2 peers for view rotation to be meaningful -- with a single peer,
-        // `viewNumber % 1 = 0` always returns the same peer and view change becomes a no-op.
-        // At genesis / cold start, OR in a solo-bootstrap tail (only one peer graduated),
-        // fall back to the full Core committee.
-        coreList = committees.core
-        leaderEligibility = LeaderEligibility.fromRecentSigners(
-          core = coreList,
-          peerQuality = controllerInputs.peerQuality,
-          recentSigners = lastOutcome.recentSigners,
-          minParticipationObservations = config.minParticipationObservations,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
-        leaderPool = leaderEligibility.leaderPool
-        exclusionReasonLabel = Metrics.unsafeLabelName("reason")
-        exclusionDecisionLabel = Metrics.unsafeLabelName("decision")
-        _ <- leaderEligibility.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_leader_eligibility_total",
-                exclusions.size,
-                Seq(
-                  exclusionDecisionLabel -> "excluded",
-                  exclusionReasonLabel -> reason
-                )
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_leader_eligibility_total",
-          leaderPool.size,
-          Seq(
-            exclusionDecisionLabel -> "eligible",
-            exclusionReasonLabel -> "selected_pool"
-          )
-        )
+        // Leader = round-robin over the frozen round committee (the same pool StateTransitions uses for VCC/TC view
+        // changes), indexed by ordinal and view. No hash, quality, or leader-reported input can change who leads.
+        leaderPool = signingFacilitators
         // Deterministic GL0 view seed:
         // `timeView` remains computed from the timestamp window, but it is treated as a pacemaker
         // timeout hint, not as unilateral proposal-critical state. A local wall clock must not pick
@@ -868,17 +566,7 @@ object GlobalSnapshotConsensusStateCreator {
         // diagnostic, and `timeView` is only a pacemaker hint for signed VCV emission. Neither is
         // quorum evidence, so neither may directly seed proposal-critical view/leader selection.
         initialView = 0
-        leader = facilitatorSelector.selectLeaderWeighted(
-          leaderPool,
-          entropy,
-          viewNumber = initialView,
-          qualityScores = controllerInputs.peerQuality,
-          selfHealthHints = controllerInputs.selfHealth,
-          peerViewChanges = controllerInputs.viewChanges,
-          minLeaderRatioPct = config.leaderRotationMinRatioPct,
-          hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
+        leader = LeaderSchedule.leader(leaderPool, key.value.value, initialView.toLong)
 
         _ <- ConsensusLog.info(
           logger,
@@ -887,17 +575,8 @@ object GlobalSnapshotConsensusStateCreator {
           if (leader === selfId) "Leader" else "Validator",
           FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
-          "active" -> signingFacilitators.size.toString,
-          "core" -> coreList.size.toString,
+          "votingCommittee" -> signingFacilitators.size.toString,
           "leaderPool" -> leaderPool.size.toString,
-          "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
-          "recentSignerActiveFilterApplied" -> activeAdmission.recentFilterApplied.toString,
-          "activeExclusions" -> activeAdmission.exclusions.size.toString,
-          "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
-          "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
-          "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
-          "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
-          "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )
@@ -917,11 +596,9 @@ object GlobalSnapshotConsensusStateCreator {
           time,
           withdrawnFacilitators = WithdrawnFacilitators.empty,
           eligibleFacilitators = EligibleFacilitators(allEligible),
-          coreFacilitators = CoreFacilitators(committees.core),
-          tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
-          // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
+          // `initialView` argument passed to LeaderSchedule above so the
           // leader the round believes it has at view=N matches the leader the selector returns
           // at view=N. View-change continues monotonically from certified VCC advancement.
           viewNumber = initialView,
@@ -969,8 +646,8 @@ object GlobalSnapshotConsensusStateCreator {
           .evictionVoteRetransmission(
             selfId,
             resources,
-            committees.core.toSet,
-            committees.core.toSet ++ committees.tier1.toSet,
+            signingFacilitators.toSet,
+            signingFacilitators.toSet,
             assembledEvictionCertificates
           )
           .traverse_ { retransmission =>
@@ -986,7 +663,7 @@ object GlobalSnapshotConsensusStateCreator {
             auditSigningFinalityParticipation(
               key,
               lastOutcome,
-              committees.core.toSet,
+              signingFacilitators.toSet,
               signingFacilitators.toSet,
               resources,
               time,
@@ -1015,7 +692,6 @@ object GlobalSnapshotConsensusStateCreator {
         }
         _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, lastOutcome.finished.context, logger).void
         eventHashes <- eventMempool.getEventHashes
-        selfHealth <- localHealthMonitor.current
         // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the
         // round-finalize median absorbs outliers and the consume-site clamp pins
         // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
@@ -1045,7 +721,6 @@ object GlobalSnapshotConsensusStateCreator {
           lastOutcome.key,
           lastOutcome.finished.snapshotHash,
           consensusConfigHash = consensusConfigHash.some,
-          selfHealthHint = selfHealth.some,
           proposerClockMs = proposerClockMs.some,
           triggerStatement = triggerStatement
         )

@@ -80,7 +80,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Boundary for Global L0 health-derived membership removal. The deployed policy retains signing leases.
   membershipPolicy: HealthDerivedMembershipPolicy,
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
-  // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
+  // size >= BootstrapCommittee.MinimumSize (matches Phase 4's warmup-for-penalty-accrual).
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
   // while this returns true -- evictions during bootstrap caused cascading committee splits in
   // the early fork-recovery E2E failures.
@@ -110,7 +110,6 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Returns an empty map if the outcome carries no peerQuality (genesis / pre-v8 outcomes),
   // in which case the wider-pool reduces to `eligibleFacilitators` and preserves prior
   // behavior.
-  peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
   // Layer-specific extraction of the consensus-agreed Key of the carried outcome (the
   // last finalized snapshot ordinal). Used by `StallDetector`'s alpha.98 round-start
   // feasibility check: a peer whose locally-observed tip is < `lastOutcomeKeyOf(state.lastOutcome)`
@@ -118,6 +117,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // this round. Local guard only -- decision does not mutate the round committee or the
   // facilitator hash, so determinism is preserved.
   lastOutcomeKeyOf: Outcome => Key,
+  // Round index (snapshot ordinal) used by the round-robin LeaderSchedule.
+  roundIndexOf: Key => Long,
   // Layer-specific extraction of the consensus-agreed end timestamp for the carried outcome.
   // The timestamp is used only as pacemaker evidence: once the local clock observes that the
   // current view has exceeded the parent outcome's end-time + viewInterval budget,
@@ -192,8 +193,8 @@ object ConsensusEngineContext {
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
-    peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
+    roundIndexOf: Key => Long,
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     onOutcomeFinalized: Outcome => F[Unit],
     onOutcomeInitialized: Outcome => F[Unit],
@@ -236,8 +237,8 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        peerQualityOf,
         lastOutcomeKeyOf,
+        roundIndexOf,
         lastOutcomeEndTimeMsOf,
         onOutcomeFinalized,
         onOutcomeInitialized,

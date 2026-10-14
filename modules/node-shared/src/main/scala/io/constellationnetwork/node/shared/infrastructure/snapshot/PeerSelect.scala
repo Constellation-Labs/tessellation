@@ -62,10 +62,9 @@ object PeerSelect {
     *
     * LIVENESS / EFFICIENCY ONLY -- this is NOT a fork-safety boundary. Fork-safety on recovery is enforced at the download/validation
     * layer: every downloaded snapshot is cryptographically signature-validated against the seedlist (see
-    * `Download.validateSnapshotSignatures`), and an optional seedlist-signed recovery checkpoint pins the canonical `(ordinal, hash)` the
-    * chain must pass through (see `RecoveryCheckpoint`). Source selection only chooses WHICH peer to download from; it cannot, on its own,
-    * distinguish the canonical chain from a minority fork (the per-round committee is not available here), so it does not try to -- a
-    * chosen source's snapshots are still fully validated on download.
+    * `Download.validateSnapshotSignatures`). Source selection only chooses WHICH peer to download from; it cannot, on its own, distinguish
+    * the canonical chain from a minority fork (the per-round committee is not available here), so it does not try to -- a chosen source's
+    * snapshots are still fully validated on download.
     *
     * Given each responder's latest ordinal and the caller's local ordinal, decide which responders to keep as download-source candidates.
     * Returns the responders at the single most-common AHEAD ordinal when that ordinal is reported by a strict majority of responders;

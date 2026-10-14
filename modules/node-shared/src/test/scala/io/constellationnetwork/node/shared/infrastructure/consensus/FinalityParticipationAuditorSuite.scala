@@ -36,6 +36,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
       signers,
       ordinal,
       entropy(parent),
+      0L,
       if (observedAt == Duration.Zero) (ordinal * 43L).seconds else observedAt,
       minimumMissDuration,
       inBootstrap,
@@ -43,11 +44,11 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     )
 
   test("target is permutation-independent and restricted to peers seated in the parent") {
-    val expected = FinalityParticipationAuditor.selectTarget(tier1, parentCommittee, entropy("parent"))
+    val expected = FinalityParticipationAuditor.selectTarget(tier1, parentCommittee, 0L)
     val selections = tier1.toList.permutations
       .take(24)
       .map { permutation =>
-        FinalityParticipationAuditor.selectTarget(permutation.toSet, parentCommittee, entropy("parent"))
+        FinalityParticipationAuditor.selectTarget(permutation.toSet, parentCommittee, 0L)
       }
       .toList
 
@@ -66,8 +67,8 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect(first.decision.exists(d => d.consecutiveMisses == 1 && !d.shouldVote)) &&
     expect(second.history.consecutiveMisses.values.forall(_ == 2)) &&
     expect(second.decision.exists(d => d.consecutiveMisses == 2 && !d.shouldVote)) &&
-    expect(third.history.consecutiveMisses.values.forall(_ == TierTransitions.DemotionConsecutiveMisses)) &&
-    expect(third.decision.exists(d => d.consecutiveMisses == TierTransitions.DemotionConsecutiveMisses && d.shouldVote))
+    expect(third.history.consecutiveMisses.values.forall(_ == FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses)) &&
+    expect(third.decision.exists(d => d.consecutiveMisses == FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses && d.shouldVote))
   }
 
   test("three misses do not emit an eviction vote while next-seat finality headroom remains") {
@@ -173,11 +174,20 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect(alternateSameOrdinal.decision.forall(!_.shouldVote))
   }
 
-  test("round entropy rotates the bounded audit target") {
-    val targets = (1 to 32).flatMap { index =>
-      FinalityParticipationAuditor.selectTarget(tier1, parentCommittee, entropy(s"parent-$index"))
-    }.toSet
+  test("the audit target rotates through every auditable parent member by opportunity index") {
+    val auditable = tier1.intersect(parentCommittee)
+    val targets = (0L until auditable.size.toLong).flatMap { index =>
+      FinalityParticipationAuditor.selectTarget(tier1, parentCommittee, index)
+    }
 
-    expect(targets.size > 1)
+    expect.same(auditable, targets.toSet).and(expect.same(auditable.size, targets.distinct.size))
+  }
+
+  test("nodes with different local histories select the same target at the same round") {
+    val round = 1234L
+    val index = DeterministicRotation.opportunityIndex(round, 5)
+    val a = FinalityParticipationAuditor.selectTarget(tier1, parentCommittee, index)
+    val b = FinalityParticipationAuditor.selectTarget(tier1.toList.reverse.toSet, parentCommittee, index)
+    expect.same(a, b)
   }
 }

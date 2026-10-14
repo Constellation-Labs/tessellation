@@ -8,7 +8,6 @@ import cats.{Applicative, MonadThrow, Parallel}
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpoint
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -224,7 +223,6 @@ object Download {
     case object DeadlineExceeded extends DownloadOutcome { val label = "deadline_exceeded" }
     case object StateProofInvalid extends DownloadOutcome { val label = "state_proof_invalid" }
     case object SnapshotSignaturesInvalid extends DownloadOutcome { val label = "snapshot_signatures_invalid" }
-    case object RecoveryCheckpointFork extends DownloadOutcome { val label = "recovery_checkpoint_fork" }
     case object ChainInvalid extends DownloadOutcome { val label = "chain_invalid" }
     case object ChainLinkMismatch extends DownloadOutcome { val label = "chain_link_mismatch" }
     case object ChainSequenceMismatch extends DownloadOutcome { val label = "chain_sequence_mismatch" }
@@ -328,8 +326,7 @@ object Download {
     globalSnapshotConsensusStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     joining: Joining[F],
     recoveryPeerHint: RecoveryPeerHint[F],
-    seedlist: Option[Set[PeerId]],
-    recoveryCheckpoint: Option[RecoveryCheckpoint]
+    seedlist: Option[Set[PeerId]]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
@@ -346,8 +343,8 @@ object Download {
     // Verify a downloaded snapshot's own proofs before it is accepted: cryptographic validity (under the
     // hasher active AT THE SNAPSHOT'S ORDINAL -- the signing hasher, not the current one), every signer in
     // the seedlist (inert when no seedlist is configured), and no duplicate signers. This does NOT enforce
-    // a finality threshold (the committee is not available at recovery -- see the recovery-checkpoint gate
-    // for that); it closes signature forgery and non-seedlist signers.
+    // a finality threshold (the committee is not available at recovery); it closes signature forgery and
+    // non-seedlist signers.
     private def validateSnapshotSignatures(
       snapshot: Signed[GlobalIncrementalSnapshot]
     )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
@@ -397,29 +394,6 @@ object Download {
         } yield ()
       }
 
-    // L2c fork-safety: when a seedlist-signed recovery checkpoint is configured, the chain this node accepts
-    // MUST pass through the checkpoint's exact (ordinal, hash). At the checkpoint ordinal a hash mismatch
-    // means this chain forks from the trusted recovery anchor -- reject it. Enforced at three sites so a
-    // configured checkpoint cannot be bypassed: each downloaded snapshot in the forward walk (`checkpointGate`),
-    // each snapshot persisted in observe mode (fetchNextSnapshot), and the already-persisted local snapshot at
-    // the checkpoint ordinal when the forward walk starts at or above it (`verifyLocalCheckpoint`). All share
-    // the pure `RecoveryCheckpoint.mismatchAt` decision so the rule cannot drift. Inert when no checkpoint is
-    // configured. The hash is computed under the snapshot's own ordinal hasher to match the canonical hash.
-    private def raiseOnCheckpointMismatch(ordinal: SnapshotOrdinal, hash: Hash): F[Unit] =
-      RecoveryCheckpoint.mismatchAt(recoveryCheckpoint, ordinal, hash) match {
-        case Some((expected, got)) => CheckpointForkDetected(ordinal, expected, got).raiseError[F, Unit]
-        case None                  => Applicative[F].unit
-      }
-
-    private def checkpointGate(
-      snapshot: Signed[GlobalIncrementalSnapshot]
-    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
-      if (recoveryCheckpoint.exists(_.ordinal === snapshot.ordinal))
-        hasherSelector
-          .forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed)
-          .flatMap(hashed => raiseOnCheckpointMismatch(snapshot.ordinal, hashed.hash))
-      else Applicative[F].unit
-
     /** Validate the only chain identity relation that is not contained in an individual snapshot: the next snapshot must point at the hash
       * of its exact ordinal predecessor. Hash the predecessor under its own ordinal's hasher so this helper also remains correct at a
       * serialization boundary.
@@ -452,25 +426,6 @@ object Download {
               ).raiseError[F, Unit]
             )
         }
-      }
-
-    // Forward `validateChain` only re-validates ordinals ABOVE its starting anchor, so a checkpoint at or
-    // below the anchor would never be proven against the (already-persisted) local chain. Verify it directly:
-    // a forked local snapshot at the checkpoint ordinal is then caught even when the node has local history
-    // through the checkpoint (the operator-recovers-a-forked-node case).
-    private def verifyLocalCheckpoint(
-      anchorOrdinal: SnapshotOrdinal
-    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
-      recoveryCheckpoint match {
-        case Some(cp) if cp.ordinal.value.value <= anchorOrdinal.value.value =>
-          snapshotStorage.readPersisted(cp.ordinal).flatMap {
-            case Some(local) =>
-              hasherSelector
-                .forOrdinal(cp.ordinal)(implicit hasher => local.toHashed)
-                .flatMap(hashed => raiseOnCheckpointMismatch(cp.ordinal, hashed.hash))
-            case None => Applicative[F].unit
-          }
-        case _ => Applicative[F].unit
       }
 
     val minBatchSizeToStartObserving: Long = 1L
@@ -737,7 +692,6 @@ object Download {
       case _: SnapshotFailure.CleanupIncomplete                        => DownloadOutcome.CleanupIncomplete
       case InvalidStateProof(_)                                        => DownloadOutcome.StateProofInvalid
       case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
-      case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
       case _: ChainLinkMismatch                                        => DownloadOutcome.ChainLinkMismatch
       case _: ChainSequenceMismatch                                    => DownloadOutcome.ChainSequenceMismatch
       case _: ReplaySnapshotMissing                                    => DownloadOutcome.ReplaySnapshotMissing
@@ -759,7 +713,6 @@ object Download {
       case _: SnapshotFailure.TokenUnlockGenerationFailed              => DownloadOutcome.TokenUnlockError
       case CannotFetchSnapshot                                         => DownloadOutcome.FetchSnapshotFailed
       case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
-      case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
       case _: ChainLinkMismatch                                        => DownloadOutcome.ChainLinkMismatch
       case _: ChainSequenceMismatch                                    => DownloadOutcome.ChainSequenceMismatch
       case _: ReplaySnapshotMissing                                    => DownloadOutcome.ReplaySnapshotMissing
@@ -859,7 +812,7 @@ object Download {
     /** Fast path for an ordinary non-committee follower that missed at most two canonical snapshots.
       *
       * The AbandonmentTracker selects this mode only when the lagging node is outside the frozen round committee. We still independently
-      * require a strict responder-majority on the exact forward target, then reuse the normal hash walk, signature checks, checkpoint gate,
+      * require a strict responder-majority on the exact forward target, then reuse the normal hash walk, signature checks,
       * state-proof/context derivation, and strict LastN prepend. No cluster rejoin or random 1-5-round observe delay is needed: after the
       * contiguous gap is installed, `observeWithLimit(..., downloadedOrdinal)` registers at that exact tip and returns immediately.
       *
@@ -1491,7 +1444,6 @@ object Download {
         hasherSelector.withCurrent(implicit hs => fetchSnapshot(none, lastSnapshot.ordinal.next)).flatMap { snapshot =>
           validateNextSnapshot(lastSnapshot, snapshot, SnapshotSource.Network) >>
             validateSnapshotSignatures(snapshot) >>
-            checkpointGate(snapshot) >>
             HasherSelector[F].withCurrent { implicit hasher =>
               globalSnapshotContextFns
                 .createContext(
@@ -1631,7 +1583,6 @@ object Download {
               case Some(snapshot) =>
                 validateNextSnapshot(lastSnapshot, snapshot, replaySource) >>
                   validateSnapshotSignatures(snapshot) >>
-                  checkpointGate(snapshot) >>
                   HasherSelector[F].withCurrent { implicit hasher =>
                     globalSnapshotContextFns
                       .createContext(
@@ -1744,8 +1695,7 @@ object Download {
         }
         .flatMap {
           case (s, c) =>
-            verifyLocalCheckpoint(s.ordinal) >>
-              updateStoragesWithDownloadedSnapshot(s, c) >>
+            updateStoragesWithDownloadedSnapshot(s, c) >>
               onProgress("replay_anchor", s.ordinal) >>
               go(s, c)
         }
@@ -1920,8 +1870,6 @@ object Download {
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
 
   case class InvalidSnapshotSignatures(ordinal: SnapshotOrdinal, reason: String) extends NoStackTrace
-
-  case class CheckpointForkDetected(ordinal: SnapshotOrdinal, expected: Hash, got: Hash) extends NoStackTrace with RecoveryFallbackEligible
 
   case object UnexpectedState extends NoStackTrace
 

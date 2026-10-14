@@ -4,6 +4,8 @@ Date: 2026-08-11
 
 Status: Proposed; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
+> Amended by [ADR-0036](0036-single-frozen-voting-set.md): certification is by the single frozen committee; `roundStartCore` and `CoreCommitQC` are replaced by the committee and `CommitQC` (CertifiedConsensusSchema v36).
+
 ## Context
 
 Global L0 halted for seven hours after different nodes finalized the same snapshot

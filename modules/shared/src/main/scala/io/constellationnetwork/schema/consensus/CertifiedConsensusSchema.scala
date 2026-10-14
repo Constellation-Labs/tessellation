@@ -4,7 +4,7 @@ import cats.Show
 import cats.data.NonEmptySet
 import cats.syntax.eq._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -17,7 +17,7 @@ import io.circe._
 import io.circe.syntax._
 
 object CertifiedConsensusSchema {
-  val Version: Int = 35
+  val Version: Int = 36
 }
 
 /** Wire-only v35 types used by DAG L0, the Global incremental snapshot schema, and Snapshot Streaming. Construction and verification remain
@@ -87,11 +87,9 @@ final case class TriggerStatement(
 @derive(eqv, encoder, decoder)
 final case class CertifiedRoundAuthorityV1(
   facilitators: NonEmptySet[PeerId],
-  // These are signed redundant bindings, not advisory caches. Every ProposalQC
-  // construction and verification recomputes them from the carried sets.
-  facilitatorsHash: Hash,
-  core: NonEmptySet[PeerId],
-  coreHash: Hash
+  // Signed redundant binding, not an advisory cache. Every ProposalQC construction and verification recomputes it
+  // from the carried set.
+  facilitatorsHash: Hash
 )
 
 @derive(eqv, encoder, decoder)
@@ -105,9 +103,7 @@ final case class ProposalValue(
   contextHash: Hash,
   roundStartFacilitators: NonEmptySet[PeerId],
   roundStartFacilitatorsHash: Hash,
-  roundStartCore: NonEmptySet[PeerId],
-  roundStartCoreHash: Hash,
-  // The current QC authenticates the exact full/Core authority allowed to
+  // The current QC authenticates the exact voting committee allowed to
   // certify the next round. Historical replay consumes this transition effect
   // directly instead of re-running a joiner's current policy against old data.
   nextRoundAuthority: CertifiedRoundAuthorityV1,
@@ -122,8 +118,6 @@ final case class ProposalValue(
   admissionNominee: Option[PeerId],
   admittedPeers: SortedSet[PeerId],
   evictedPeers: SortedSet[PeerId],
-  observedResponders: SortedSet[PeerId],
-  observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
   timeoutVoters: SortedSet[PeerId],
   consensusEndTime: Option[Long]
 )
@@ -131,12 +125,7 @@ final case class ProposalValue(
 object ProposalValue {
   implicit val showInstance: Show[ProposalValue] = Show.fromToString
 
-  def validate(value: ProposalValue): Either[String, Unit] = {
-    val fullCommittee = value.roundStartFacilitators.toSortedSet
-    val core = value.roundStartCore.toSortedSet
-    val nextFullCommittee = value.nextRoundAuthority.facilitators.toSortedSet
-    val nextCore = value.nextRoundAuthority.core.toSortedSet
-
+  def validate(value: ProposalValue): Either[String, Unit] =
     for {
       _ <- Either.cond(
         value.schemaVersion === CertifiedConsensusSchema.Version,
@@ -146,18 +135,9 @@ object ProposalValue {
       _ <- Either.cond(value.networkId.nonEmpty, (), "network_id_empty")
       _ <- Either.cond(value.key >= 0L, (), "key_negative")
       _ <- Either.cond(value.committedView >= 0L, (), "committed_view_negative")
-      _ <- Either.cond(core.subsetOf(fullCommittee), (), "round_start_core_not_subset")
-      _ <- Either.cond(nextCore.subsetOf(nextFullCommittee), (), "next_round_core_not_subset")
       _ <- Either.cond(value.admittedPeers.intersect(value.evictedPeers).isEmpty, (), "admit_evict_overlap")
-      _ <- Either.cond(value.observedResponders.subsetOf(fullCommittee), (), "responders_not_subset")
-      _ <- Either.cond(
-        value.observedSelfHealth.keySet.subsetOf(value.observedResponders),
-        (),
-        "self_health_not_responder_subset"
-      )
       _ <- Either.cond(value.consensusEndTime.forall(_ >= 0L), (), "consensus_end_time_negative")
     } yield ()
-  }
 }
 
 @derive(eqv, show, encoder, decoder)
@@ -170,7 +150,6 @@ final case class CertificationStatement(
   parentArtifactHash: Hash,
   valueHash: Hash,
   roundStartFacilitatorsHash: Hash,
-  roundStartCoreHash: Hash,
   certifiedView: Long
 )
 
@@ -194,34 +173,29 @@ object CertifiedProposalQC {
     } yield CertifiedProposalQC(value, valueHash, signatures)
 }
 
+/** Commit quorum certificate over a proposal value, signed by the frozen voting committee. */
 @derive(eqv)
-final case class CoreCommitQC(
+final case class CommitQC(
   valueHash: Hash,
-  roundStartCoreHash: Hash,
   signatures: NonEmptySet[SignatureProof]
 )
 
-object CoreCommitQC {
-  implicit val showInstance: Show[CoreCommitQC] = Show.fromToString
-  implicit val encoder: Encoder[CoreCommitQC] = Encoder.instance { qc =>
-    Json.obj(
-      "valueHash" -> qc.valueHash.asJson,
-      "roundStartCoreHash" -> qc.roundStartCoreHash.asJson,
-      "signatures" -> qc.signatures.asJson
-    )
+object CommitQC {
+  implicit val showInstance: Show[CommitQC] = Show.fromToString
+  implicit val encoder: Encoder[CommitQC] = Encoder.instance { qc =>
+    Json.obj("valueHash" -> qc.valueHash.asJson, "signatures" -> qc.signatures.asJson)
   }
-  implicit val decoder: Decoder[CoreCommitQC] = (c: HCursor) =>
+  implicit val decoder: Decoder[CommitQC] = (c: HCursor) =>
     for {
       valueHash <- c.downField("valueHash").as[Hash]
-      roundStartCoreHash <- c.downField("roundStartCoreHash").as[Hash]
       signatures <- c.downField("signatures").as[NonEmptySet[SignatureProof]]
-    } yield CoreCommitQC(valueHash, roundStartCoreHash, signatures)
+    } yield CommitQC(valueHash, signatures)
 }
 
 @derive(eqv, encoder, decoder)
 final case class CertifiedOutcome(
   proposalQc: CertifiedProposalQC,
-  coreCommitQc: CoreCommitQC
+  commitQc: CommitQC
 )
 
 object CertifiedOutcome {

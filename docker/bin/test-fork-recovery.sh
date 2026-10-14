@@ -99,15 +99,17 @@ peer_id_of() {
 # ARTIFACT rather than from logs. Every node carries identical bytes here (it is covered by the
 # artifact signature), so one query describes the whole cluster's view -- no cross-node skew.
 #
-# Off-by-one: the committee for ordinal N is recorded in snapshot N+1. Snapshot N's own
-# peerHistory only holds entries up to N-1.
+# Off-by-one: the committee for ordinal N is recorded in snapshot N+1, which embeds the certified
+# outcome of round N (certifiedLineage.parentOutcome). The certified key must equal N, otherwise the
+# lineage belongs to a different round and the committee is not reported.
 get_committee_peer_ids() {
   local port=$((GL0_PORT_PREFIX * 100))
   local tip
   tip=$(curl -s --max-time 5 "http://localhost:${port}/global-snapshots/latest" 2>/dev/null | jq -r '.value.ordinal // empty' 2>/dev/null || true)
   { [ -z "$tip" ] || [ "$tip" -lt 1 ]; } && return 0
   curl -s --max-time 5 "http://localhost:${port}/global-snapshots/${tip}" 2>/dev/null |
-    jq -r --arg o "$((tip - 1))" '.value.peerHistory.controllerEvidence[$o].roundStartFacilitators // [] | .[]' 2>/dev/null || true
+    jq -r --argjson o "$((tip - 1))" '.value.certifiedLineage.parentOutcome.proposalQc.value
+      | select(.key == $o) | .roundStartFacilitators // [] | .[]' 2>/dev/null || true
 }
 
 # Helper: get node state

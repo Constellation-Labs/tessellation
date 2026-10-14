@@ -4,7 +4,9 @@ Date: 2026-06-30
 
 ## Status
 
-Accepted; superseded in part by [ADR-0035](0035-v35-to-v41-mainnet-migration.md) (decision 1 removed, decision 2 kept)
+Superseded
+
+> Amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md) (decision 1 removed, decision 2 kept), then superseded by [ADR-0036](0036-single-frozen-voting-set.md): quorum shrink is removed; the committee supermajority described here as the finality floor is now the only quorum.
 
 ## Context
 

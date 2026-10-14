@@ -4,7 +4,9 @@ Date: 2026-08-04
 
 Updated: 2026-08-10
 
-Status: Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
+Status: Superseded
+
+> Amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md), then superseded by [ADR-0036](0036-single-frozen-voting-set.md): there is no Tier-1 lease; every seat in the frozen committee votes.
 
 ## Context
 

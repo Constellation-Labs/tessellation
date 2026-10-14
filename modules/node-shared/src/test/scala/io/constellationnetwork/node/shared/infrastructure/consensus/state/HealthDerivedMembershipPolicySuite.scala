@@ -14,8 +14,6 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
   private def peer(index: Int): PeerId = PeerId(Hex(f"$index%0128x"))
 
   private val facilitators = List(peer(4), peer(1), peer(5), peer(2), peer(3))
-  private val core = List(peer(4), peer(1), peer(5))
-
   test("GL0 atomic replacement capability does not re-enable automatic removal") {
     val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
 
@@ -28,50 +26,33 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     expect(policy.allowsCertifiedAtomicReplacement)
   }
 
-  test("GL0 retain policy preserves facilitator and Core ordering across a timeout") {
+  test("GL0 retain policy keeps the frozen committee as both membership and leader pool across a timeout") {
     val result = HealthDerivedMembershipPolicy.RetainSigningLeases.timeoutMembership(
       facilitators,
-      core,
       roundStartFacilitators = facilitators,
       timeoutVoters = Set(peer(1), peer(2), peer(3)),
       shrinkFloor = 3
     )
 
     expect.same(facilitators, result.facilitators) &&
-    expect.same(core, result.coreFacilitators) &&
-    expect.same(core, result.leaderPool) &&
+    expect.same(facilitators, result.leaderPool) &&
     expect.same(facilitators, result.evaluatedActive) &&
     expect(!result.shrinkApplied) &&
     expect(!result.shrinkEvaluated) &&
     expect.same(0, result.exclusionCount)
   }
 
-  test("GL0 retain policy uses the frozen ordered committee when Core is empty") {
-    val locallyActive = facilitators.tail
-    val result = HealthDerivedMembershipPolicy.RetainSigningLeases.timeoutMembership(
-      locallyActive,
-      coreFacilitators = List.empty,
-      roundStartFacilitators = facilitators,
-      timeoutVoters = Set(peer(1), peer(2), peer(3)),
-      shrinkFloor = 3
-    )
-
-    expect.same(facilitators, result.leaderPool) && expect.same(facilitators, result.facilitators)
-  }
-
   test("node-local withdrawal converges GL0 view membership, leader pool, and signature hash input") {
-    val withdrawnCore = peer(4)
-    val activeAfterWithdrawal = facilitators.filterNot(_ == withdrawnCore)
+    val withdrawn = peer(4)
+    val activeAfterWithdrawal = facilitators.filterNot(_ == withdrawn)
     val result = HealthDerivedMembershipPolicy.RetainSigningLeases.timeoutMembership(
       activeAfterWithdrawal,
-      core,
       roundStartFacilitators = facilitators,
       timeoutVoters = Set(peer(1), peer(2), peer(3)),
       shrinkFloor = 3
     )
     val fullActiveResult = HealthDerivedMembershipPolicy.RetainSigningLeases.timeoutMembership(
       facilitators,
-      core,
       roundStartFacilitators = facilitators,
       timeoutVoters = Set(peer(1), peer(2), peer(3)),
       shrinkFloor = 3
@@ -80,24 +61,14 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     val withdrawnActiveCanonical =
       HealthDerivedMembershipPolicy.RetainSigningLeases.canonicalFacilitators(activeAfterWithdrawal, facilitators)
 
-    expect.same(core, result.coreFacilitators) &&
     expect.same(facilitators, result.facilitators) &&
     expect.same(facilitators, result.evaluatedActive) &&
-    expect.same(core, result.leaderPool) &&
+    expect.same(facilitators, result.leaderPool) &&
     expect.same(fullActiveResult.facilitators, result.facilitators) &&
     expect.same(fullActiveResult.leaderPool, result.leaderPool) &&
     expect.same(facilitators, fullActiveCanonical) &&
     expect.same(fullActiveCanonical, withdrawnActiveCanonical) &&
-    expect.same(
-      core,
-      HealthDerivedMembershipPolicy.RetainSigningLeases
-        .certifiedViewChangeLeaderPool(core, activeAfterWithdrawal, facilitators)
-    ) &&
-    expect.same(
-      HealthDerivedMembershipPolicy.RetainSigningLeases.certifiedViewChangeLeaderPool(core, facilitators, facilitators),
-      HealthDerivedMembershipPolicy.RetainSigningLeases
-        .certifiedViewChangeLeaderPool(core, activeAfterWithdrawal, facilitators)
-    )
+    expect.same(facilitators, HealthDerivedMembershipPolicy.RetainSigningLeases.certifiedViewChangeLeaderPool(facilitators))
   }
 
   test("GL0 retain policy disables every automatic-removal authority") {
@@ -127,7 +98,6 @@ object HealthDerivedMembershipConvergenceSuite extends SimpleIOSuite {
   private def peer(index: Int): PeerId = PeerId(Hex(f"$index%0128x"))
 
   private val roundStart = List(peer(4), peer(1), peer(5), peer(2), peer(3))
-  private val core = List(peer(4), peer(1), peer(5))
   private val locallyWithdrawn = roundStart.filterNot(_ == peer(4))
   private val timeoutVoters = Set(peer(1), peer(2), peer(3))
 
@@ -135,10 +105,10 @@ object HealthDerivedMembershipConvergenceSuite extends SimpleIOSuite {
     val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
     val vccFullRoster = policy.canonicalFacilitators(roundStart, roundStart)
     val vccWithdrawnRoster = policy.canonicalFacilitators(locallyWithdrawn, roundStart)
-    val vccFullLeaderPool = policy.certifiedViewChangeLeaderPool(core, roundStart, roundStart)
-    val vccWithdrawnLeaderPool = policy.certifiedViewChangeLeaderPool(core, locallyWithdrawn, roundStart)
-    val tcFull = policy.timeoutMembership(roundStart, core, roundStart, timeoutVoters, shrinkFloor = 3)
-    val tcWithdrawn = policy.timeoutMembership(locallyWithdrawn, core, roundStart, timeoutVoters, shrinkFloor = 3)
+    val vccFullLeaderPool = policy.certifiedViewChangeLeaderPool(roundStart)
+    val vccWithdrawnLeaderPool = policy.certifiedViewChangeLeaderPool(roundStart)
+    val tcFull = policy.timeoutMembership(roundStart, roundStart, timeoutVoters, shrinkFloor = 3)
+    val tcWithdrawn = policy.timeoutMembership(locallyWithdrawn, roundStart, timeoutVoters, shrinkFloor = 3)
 
     JsonSerializer.forAsync[IO].flatMap { implicit jsonSerializer =>
       val hasher = Hasher.forJson[IO]

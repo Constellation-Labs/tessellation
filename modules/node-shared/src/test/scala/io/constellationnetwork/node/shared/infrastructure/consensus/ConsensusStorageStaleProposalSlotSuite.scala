@@ -83,9 +83,7 @@ object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
       vcc = if (hasVcc) Some(sentinelVcc) else None,
       timeoutCertificate = if (hasTc) Some(sentinelTc) else None,
       evictionCertificates = List.empty,
-      admissionCertificates = List.empty,
-      observedResponders = List.empty,
-      observedSelfHealth = SortedMap.empty
+      admissionCertificates = List.empty
     )
 
   /** Mirrors the lambda body inside `ConsensusStorage.pruneStaleProposalSlots`. */

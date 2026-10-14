@@ -1,4 +1,10 @@
-# Tiered Committee Architecture (Core / Tier-1 / Witness)
+# Tiered Committee Architecture (Core / Tier-1 / Witness) (retired)
+
+**Status: Retired (superseded by [ADR-0036](../adr/0036-single-frozen-voting-set.md)).** Global L0 no longer partitions the committee into Core, Tier 1 and Witness. Each round has one frozen voting set (`roundStartFacilitators`), one quorum, round-robin leaders (`LeaderSchedule`), and a certified successor rule `(B \ (D u E)) u A`; `CommitteeBuilder`, `TierTransitions`, the controller scores and the chronic ladder are deleted. Current behavior: [README sec 9-10](README.md#9-facilitator-selection).
+
+## Historical content
+
+Everything below describes a removed mechanism and is kept for context only. Do not cite it as current behavior.
 
 This is the as-shipped reference for the three-tier committee model introduced
 in the post-v4.0.0 consensus rewrite (the "v19" multi-committee derivation). It

@@ -84,10 +84,9 @@ object GlobalSnapshotConsensus {
   /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
   private[snapshot] def normalFirstRoundCommittee(
     facilitators: List[PeerId],
-    recentProofSizes: Iterable[Int],
-    bootstrapCompleteProofsThreshold: Int
+    recentCommitteeSizes: Iterable[Int]
   ): Option[SortedSet[PeerId]] =
-    Option.when(recentProofSizes.exists(_ >= bootstrapCompleteProofsThreshold))(SortedSet.from(facilitators))
+    Option.when(BootstrapCommittee.reached(recentCommitteeSizes))(SortedSet.from(facilitators))
 
   /** Recognize the existing GL0 Facility as a first-round timing pulse. Every compared field is already carried by the declaration; this
     * helper introduces no encoder, signature domain, hash, or wire value.
@@ -194,10 +193,6 @@ object GlobalSnapshotConsensus {
           mptStore,
           loggerBundle
         )
-
-      // Startup resolves this exact object once for both the join fence and live engine. Every
-      // downstream component reads the same projection; the fallback is retained defensively.
-      resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
 
       certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
         appConfig.snapshot.snapshotPath / "certifiedVoteLocks"
@@ -310,14 +305,12 @@ object GlobalSnapshotConsensus {
           } yield ()
         })
       recoverySeedCommittee = configuredRecoverySeed.map(_.map(_.committee))
-      isGlobalBootstrap = (outcome: GlobalConsensusOutcome) =>
-        !outcome.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold)
+      isGlobalBootstrap = (outcome: GlobalConsensusOutcome) => !BootstrapCommittee.reached(outcome.recentCommitteeSizes.values)
       normalFirstRoundAlignment = NormalFirstRoundAlignment[GlobalSnapshotKey, GlobalConsensusOutcome](
         committeeOf = outcome =>
           normalFirstRoundCommittee(
             outcome.facilitators.value,
-            outcome.recentProofSizes.values,
-            effectiveConsensusConfig.bootstrapCompleteProofsThreshold
+            outcome.recentCommitteeSizes.values
           ),
         facilityMatches = (key, outcome, facility) =>
           isNormalFirstRoundFacilityPulse(
@@ -375,11 +368,6 @@ object GlobalSnapshotConsensus {
           effectiveConsensusConfig,
           peerQualityTracker,
           eventMempool,
-          sharedServices.localHealthMonitor,
-          // v19 per-environment Core floor. v20 routes the env-resolved value through
-          // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
-          // both the state creator and `deterministicConfigHash` see.
-          resolvedCoreCommitteeSize,
           rawEvictionVoter,
           consensusQueue,
           finalityParticipationMissHistoryRef,
@@ -527,12 +515,13 @@ object GlobalSnapshotConsensus {
           isGlobalBootstrap,
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
-          (o: GlobalConsensusOutcome) => o.controllerEvidence.flatMap(_.get(o.key)).fold(Set.empty[PeerId])(_.roundStartFacilitators.toSet),
+          (o: GlobalConsensusOutcome) => o.certifiedRoundCommittee.getOrElse(Set.empty[PeerId]),
           (key: GlobalSnapshotKey) =>
-            ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+            AdmissionCadence.expansionAllowedAtOrdinal(
               key.value.value,
               effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
             ),
+          (key: GlobalSnapshotKey) => key.value.value,
           (o: GlobalConsensusOutcome) => Some(o.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet),
           (o: GlobalConsensusOutcome) =>
             CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
@@ -542,7 +531,6 @@ object GlobalSnapshotConsensus {
               o.expandedBeyondSingleton
             ),
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-          (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
           admissionCandidateTipProbe.some,

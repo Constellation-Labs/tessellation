@@ -119,21 +119,19 @@ object peer {
     def isResponsive: Boolean = value.responsiveness === Responsive
   }
 
-  /** Per-peer committee membership status. JSON wire form is the lowercase label ("active"/"chronic"/"probation"); preserved verbatim
-    * across the type-tightening from `String` so dashboards and downstream consumers continue working unchanged.
+  /** Per-peer committee membership status, from the latest finalized outcome. JSON wire form is the lowercase label.
     *
-    * Semantics:
-    *   - `Active` — passing chronic threshold AND not on probation
-    *   - `Chronic` — peerQuality ratio below `minParticipationRatio` after `minObservationHistoryFloor` observations
-    *   - `Probation` — entry in `readmissionCountdown`, awaiting an AdmissionCertificate
+    *   - `Seated` -- member of the frozen voting committee for the next round
+    *   - `Probation` -- entry in `readmissionCountdown`, awaiting an AdmissionCertificate
+    *   - `Cooldown` -- under a certificate-anchored penalty horizon (`penaltyUntil`)
     */
   sealed abstract class PeerCommitteeStatus(val label: String)
   object PeerCommitteeStatus {
-    case object Active extends PeerCommitteeStatus("active")
-    case object Chronic extends PeerCommitteeStatus("chronic")
+    case object Seated extends PeerCommitteeStatus("seated")
     case object Probation extends PeerCommitteeStatus("probation")
+    case object Cooldown extends PeerCommitteeStatus("cooldown")
 
-    val all: Set[PeerCommitteeStatus] = Set(Active, Chronic, Probation)
+    val all: Set[PeerCommitteeStatus] = Set(Seated, Probation, Cooldown)
 
     implicit val encoder: Encoder[PeerCommitteeStatus] = Encoder[String].contramap(_.label)
     implicit val decoder: Decoder[PeerCommitteeStatus] = Decoder[String].emap { s =>
@@ -145,10 +143,8 @@ object peer {
   @derive(encoder, decoder, show)
   case class PeerCommitteeView(
     status: PeerCommitteeStatus,
-    completed: Int,
-    participated: Int,
-    ratio: Double,
-    probationRoundsRemaining: Option[Int]
+    probationRoundsRemaining: Option[Int],
+    cooldownUntilOrdinal: Option[Long]
   )
 
   @derive(encoder, decoder, show)

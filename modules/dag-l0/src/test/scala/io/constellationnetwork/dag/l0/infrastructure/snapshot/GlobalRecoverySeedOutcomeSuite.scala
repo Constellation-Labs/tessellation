@@ -57,7 +57,7 @@ object GlobalRecoverySeedOutcomeSuite extends MutableIOSuite {
         expect.same(snapshotHash, outcome.finished.snapshotHash) &&
         expect.same(
           ConsensusOperationalState.empty.copy(
-            recentProofSizes = SortedMap(signedIncremental.ordinal -> committee.size)
+            recentCommitteeSizes = SortedMap(signedIncremental.ordinal -> committee.size)
           ),
           operational
         ) &&

@@ -4,20 +4,22 @@ import cats.Monad
 import cats.syntax.all._
 
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.hash.Hash
 
 /** Single deterministic projection used both before certifying a v35 membership value and while creating the next round.
   *
-  * The projection owns the whole non-health-derived eligibility boundary: apply the certified transition, enforce the configured seedlist,
-  * evaluate collateral against the independently rebuilt next context, and run the existing FacilitatorSelector with the new artifact hash
-  * (the next round's entropy). A certified admission is invalid unless it survives this exact projection.
+  * Successor membership is exactly (B \ (D u E)) u A: B the frozen committee, E certified evictions, A certified admissions, and D the
+  * deterministic exits, members no longer in the configured seedlist or no longer collateral-eligible in the independently rebuilt next
+  * context. Incumbents are never truncated by hash order: the configured cap only rejects a transition that would grow past max(cap, |B|).
+  * A certified admission is invalid unless it is eligible, and an empty successor is invalid.
   */
 object CertifiedNextRoundProjector {
 
   final case class Projection(
     projectedCommittee: List[PeerId],
     eligibleCommittee: List[PeerId],
-    selectedCommittee: List[PeerId]
+    selectedCommittee: List[PeerId],
+    // Deterministic exits (D): incumbents removed because they left the seedlist or lost collateral eligibility.
+    exits: List[PeerId]
   )
 
   def projectTransition(
@@ -28,6 +30,14 @@ object CertifiedNextRoundProjector {
   ): Either[String, List[PeerId]] =
     CertifiedMembershipTransition.applyTo(roundStartCommittee, admittedPeers, evictedPeers, maxChanges)
 
+  /** Admissions a proposal may carry without the successor exceeding max(cap, |B|). `removedCount` = |E u D|, the incumbents leaving
+    * through certified evictions or deterministic exits; each frees one seat, so one-for-one replacements always fit.
+    */
+  def admissionCapacity(roundStartSize: Int, removedCount: Int, maxCommitteeSize: Option[Int]): Int =
+    maxCommitteeSize.fold(Int.MaxValue) { cap =>
+      math.max(0, math.max(cap, roundStartSize) - (roundStartSize - removedCount))
+    }
+
   def project[F[_]: Monad](
     roundStartCommittee: List[PeerId],
     admittedPeers: Set[PeerId],
@@ -35,38 +45,31 @@ object CertifiedNextRoundProjector {
     maxChanges: Int,
     seedlistPeerIds: Set[PeerId],
     isContextEligible: PeerId => F[Boolean],
-    facilitatorSelector: FacilitatorSelector,
-    nextRoundEntropy: Hash
+    facilitatorSelector: FacilitatorSelector
   ): F[Either[String, Projection]] =
-    projectValidatedTransition(
-      projectTransition(roundStartCommittee, admittedPeers, evictedPeers, maxChanges),
-      admittedPeers,
-      seedlistPeerIds,
-      isContextEligible,
-      facilitatorSelector,
-      nextRoundEntropy
-    )
-
-  private def projectValidatedTransition[F[_]: Monad](
-    transition: Either[String, List[PeerId]],
-    admittedPeers: Set[PeerId],
-    seedlistPeerIds: Set[PeerId],
-    isContextEligible: PeerId => F[Boolean],
-    facilitatorSelector: FacilitatorSelector,
-    nextRoundEntropy: Hash
-  ): F[Either[String, Projection]] =
-    transition.traverse { projected =>
-      val seedlistEligible = projected.filter(pid => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(pid))
-      seedlistEligible.filterA(isContextEligible).map { eligible =>
-        val selected = facilitatorSelector.select(eligible, nextRoundEntropy)
-        val missingAdmissions = admittedPeers -- selected.toSet
-
-        Either.cond(
-          missingAdmissions.isEmpty,
-          Projection(projected, eligible, selected),
-          s"certified_membership_admission_not_next_round_eligible:${missingAdmissions.toList.sorted.map(_.value.value).mkString(",")}"
+    projectTransition(roundStartCommittee, admittedPeers, evictedPeers, maxChanges).traverse { projected =>
+      projected
+        .filterA(pid =>
+          (seedlistPeerIds.isEmpty || seedlistPeerIds.contains(pid)).pure[F].flatMap {
+            case false => false.pure[F]
+            case true  => isContextEligible(pid)
+          }
         )
-      }
+        .map { eligible =>
+          val eligibleSet = eligible.toSet
+          val missingAdmissions = admittedPeers -- eligibleSet
+          val exits = projected.filterNot(eligibleSet.contains)
+          val capLimit = facilitatorSelector.getMaxCount.fold(Int.MaxValue)(cap => math.max(cap, roundStartCommittee.size))
+          for {
+            _ <- Either.cond(
+              missingAdmissions.isEmpty,
+              (),
+              s"certified_membership_admission_not_next_round_eligible:${missingAdmissions.toList.sorted.map(_.value.value).mkString(",")}"
+            )
+            _ <- Either.cond(eligible.nonEmpty, (), "certified_membership_empty_successor")
+            _ <- Either.cond(eligible.size <= capLimit, (), s"certified_membership_over_cap:${eligible.size}/$capLimit")
+          } yield Projection(projected, eligible, eligible.sorted, exits.sorted)
+        }
     }
       .map(_.flatMap(identity))
 }

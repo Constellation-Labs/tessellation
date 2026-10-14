@@ -9,17 +9,17 @@ import io.constellationnetwork.security.hex.Hex
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.FunSuite
 
-/** Phase 3 Part A: verify that penalty / peerQuality / recentProofSizes fields of a consensus outcome can be computed from consensus-agreed
-  * inputs alone (`state.facilitators`, `state.removedFacilitators`, `state.lastOutcome`), independent of the locally-observed
-  * `signedMajorityArtifact.proofs.size` value.
+/** Phase 3 Part A: verify that penalty / peerQuality / recentCommitteeSizes fields of a consensus outcome can be computed from
+  * consensus-agreed inputs alone (`state.facilitators`, `state.removedFacilitators`, `state.lastOutcome`), independent of the
+  * locally-observed `signedMajorityArtifact.proofs.size` value.
   *
   * Background: different nodes finalize a round with different counts of `MajoritySignature` declarations collected — the advancer returns
   * as soon as quorum is reached, so fast finalizers stop at exactly quorum while slow finalizers accumulate extra signatures.
   * `SnapshotStorage.prepend` does not merge proofs from later-arriving gossip copies; `ForkInfo` gossip carries only `(ordinal, hash)`. So
   * two nodes storing the "same" snapshot (same artifact hash) can have different `proofs.size`. Prior implementation derived `signers` from
-  * those proofs, making `penalizedThisRound`, `peerQuality`, and `recentProofSizes` non-deterministic across nodes — the `lastOutcome` fed
-  * into the next round's state creator diverged, cascading into divergent facilitator sets and `facilitatorsHash` fork failures (observed
-  * in E2E ord-6).
+  * those proofs, making `penalizedThisRound`, `peerQuality`, and `recentCommitteeSizes` non-deterministic across nodes — the `lastOutcome`
+  * fed into the next round's state creator diverged, cascading into divergent facilitator sets and `facilitatorsHash` fork failures
+  * (observed in E2E ord-6).
   *
   * Fix: reach those fields from `state.facilitators - state.removedFacilitators` (both consensus-agreed; facilitators are aligned via
   * `facilitatorsHash` fork check, removedFacilitators is populated only by deterministic facility-phase fork eviction). The tests below
@@ -54,7 +54,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
     removalPenalties: SortedMap[PeerId, Int],
     cumulativeMissCounts: SortedMap[PeerId, Long],
     peerQuality: SortedMap[PeerId, (Int, Int)],
-    recentProofSizes: SortedMap[SnapshotOrdinal, Int]
+    recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int]
   )
 
   private def computeOutcomeFields(
@@ -64,7 +64,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
     previousPenalties: SortedMap[PeerId, Int],
     previousCumulative: SortedMap[PeerId, Long],
     previousPeerQuality: SortedMap[PeerId, (Int, Int)],
-    previousRecentProofSizes: SortedMap[SnapshotOrdinal, Int],
+    previousRecentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
     previousDeferrals: SortedMap[PeerId, Int]
   ): OutcomeFields = {
     val deferredInCommittee = previousDeferrals.filter(_._2 > 0).keySet
@@ -78,7 +78,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       }
     }
 
-    val isInBootstrap = !previousRecentProofSizes.values.exists(_ >= bootstrapCompleteProofsThreshold)
+    val isInBootstrap = !previousRecentCommitteeSizes.values.exists(_ >= bootstrapCompleteProofsThreshold)
     val penalizedThisRound: Set[PeerId] =
       if (isInBootstrap) Set.empty[PeerId] else (removedFacilitators -- deferredInCommittee).toSet
 
@@ -126,18 +126,18 @@ object DeterministicPenaltiesSuite extends FunSuite {
     val currentOrdValue = key.value.value
     val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
     val currentProofsSize: Int = completedFacilitators.size
-    val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
-      val withCurrent = previousRecentProofSizes.updated(key, currentProofsSize)
+    val newRecentCommitteeSizes: SortedMap[SnapshotOrdinal, Int] = {
+      val withCurrent = previousRecentCommitteeSizes.updated(key, currentProofsSize)
       withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
     }
 
-    OutcomeFields(finalPenalties, newCumulative, accumulatedQuality, newRecentProofSizes)
+    OutcomeFields(finalPenalties, newCumulative, accumulatedQuality, newRecentCommitteeSizes)
   }
 
   private def ord(n: Long): SnapshotOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(n))
 
   // A fabricated "post-bootstrap" history: one prior round with 5 signers.
-  private val postBootstrapProofSizes: SortedMap[SnapshotOrdinal, Int] =
+  private val postBootstrapCommitteeSizes: SortedMap[SnapshotOrdinal, Int] =
     SortedMap(ord(1L) -> 5)
 
   test(
@@ -154,7 +154,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     // "slow finalizer" would historically have seen proofs.size=5; fast finalizer=3.
@@ -166,7 +166,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     expect(
@@ -180,8 +180,8 @@ object DeterministicPenaltiesSuite extends FunSuite {
     ).and(expect(fromFastFinalizer.peerQuality == fromSlowFinalizer.peerQuality, s"peerQuality must be identical"))
       .and(
         expect(
-          fromFastFinalizer.recentProofSizes == fromSlowFinalizer.recentProofSizes,
-          s"recentProofSizes must be identical (uses consensus-agreed completedFacilitators.size)"
+          fromFastFinalizer.recentCommitteeSizes == fromSlowFinalizer.recentCommitteeSizes,
+          s"recentCommitteeSizes must be identical (uses consensus-agreed completedFacilitators.size)"
         )
       )
   }
@@ -194,7 +194,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     expect(
@@ -212,7 +212,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     expect(
@@ -231,7 +231,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
     )
   }
 
-  test("during bootstrap (recentProofSizes all below threshold), penalties are suppressed even with evictions") {
+  test("during bootstrap (recentCommitteeSizes all below threshold), penalties are suppressed even with evictions") {
     val preBootstrap: SortedMap[SnapshotOrdinal, Int] = SortedMap(ord(1L) -> 1) // below threshold=3
     val evicted = Set(p5)
     val result = computeOutcomeFields(
@@ -241,7 +241,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = preBootstrap,
+      previousRecentCommitteeSizes = preBootstrap,
       previousDeferrals = SortedMap.empty
     )
     expect(
@@ -255,7 +255,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
     )
   }
 
-  test("recentProofSizes uses consensus-agreed committee size (facilitators - evicted), not local proofs count") {
+  test("recentCommitteeSizes uses consensus-agreed committee size (facilitators - evicted), not local proofs count") {
     val evicted = Set(p5)
     val result = computeOutcomeFields(
       key = ord(2L),
@@ -264,13 +264,13 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     // allFacilitators.size = 5, evicted = 1, so committee size = 4.
     expect(
-      result.recentProofSizes.get(ord(2L)).contains(4),
-      s"recentProofSizes should record committee size (4 = 5 facilitators - 1 evicted), got ${result.recentProofSizes}"
+      result.recentCommitteeSizes.get(ord(2L)).contains(4),
+      s"recentCommitteeSizes should record committee size (4 = 5 facilitators - 1 evicted), got ${result.recentCommitteeSizes}"
     )
   }
 
@@ -294,7 +294,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = deferredPrev
     )
     expect(
@@ -321,7 +321,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = previousQuality,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = deferredPrev
     )
     expect(
@@ -340,7 +340,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = deferredPrev
     )
     expect(result.peerQuality.get(p1).contains((1, 1)), "p1 accrues (1,1)")
@@ -363,7 +363,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = priorQuality,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = deferredPrev
     )
     expect(
@@ -399,7 +399,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
     // Node B would have observed the same canonical committee. Had the fix
@@ -413,7 +413,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = SortedMap.empty
     )
 
@@ -432,8 +432,8 @@ object DeterministicPenaltiesSuite extends FunSuite {
       )
     ).and(
       expect(
-        nodeA_outcome.recentProofSizes == nodeB_outcome.recentProofSizes,
-        s"recentProofSizes must match (tracks canonical committee size, not post-withdrawal size)"
+        nodeA_outcome.recentCommitteeSizes == nodeB_outcome.recentCommitteeSizes,
+        s"recentCommitteeSizes must match (tracks canonical committee size, not post-withdrawal size)"
       )
     )
   }
@@ -448,7 +448,7 @@ object DeterministicPenaltiesSuite extends FunSuite {
       previousPenalties = SortedMap.empty,
       previousCumulative = SortedMap.empty,
       previousPeerQuality = SortedMap.empty,
-      previousRecentProofSizes = postBootstrapProofSizes,
+      previousRecentCommitteeSizes = postBootstrapCommitteeSizes,
       previousDeferrals = deferredPrev
     )
     expect(

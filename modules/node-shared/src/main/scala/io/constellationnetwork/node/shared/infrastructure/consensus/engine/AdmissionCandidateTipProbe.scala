@@ -114,14 +114,14 @@ object AdmissionCandidateTipProbe {
   ): Option[PeerId] =
     openAdmissionTargets.headOption.filterNot(probedTargets.contains)
 
-  /** Pick one fixed probation target for the whole round. The parent hash is round-stable entropy, so every monitor tick selects the same
-    * target and a failed probe cannot walk the candidate set.
+  /** Pick one fixed probation target for the whole round. The round ordinal is round-stable, so every monitor tick selects the same target
+    * and a failed probe cannot walk the candidate set; consecutive rounds rotate to the next probation peer.
     */
   private[consensus] def probationTargetForRound(
     probation: Set[PeerId],
-    entropy: Hash
+    roundOrdinal: Long
   ): Option[PeerId] =
-    AdmissionNomineeSelector.select(probation, Set.empty, entropy)
+    AdmissionNomineeSelector.select(probation, Set.empty, roundOrdinal)
 
   /** Advance the fixed probation target's streak only from a fresh exact direct observation. A failed, stale, or conflicting response
     * resets it. Other targets are deliberately dropped: this bridge audits one target at a time and cannot accumulate stale evidence across

@@ -81,22 +81,14 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   private val pA = peer('a')
   private val pB = peer('b')
 
-  private def record(quality: (Int, Int), penalty: Int, miss: Long, vcc: Option[Long], tier: Option[Int]): PerPeerOperationalRecord =
-    PerPeerOperationalRecord(
-      quality = quality,
-      removalPenalty = penalty,
-      cumulativeMissCount = miss,
-      readmissionCountdown = 0,
-      deferralCountdown = 0,
-      viewChangesCaused = vcc,
-      tier = tier
-    )
+  private def record(penalty: Int, miss: Long, readmission: Int): PerPeerOperationalRecord =
+    PerPeerOperationalRecord(removalPenalty = penalty, cumulativeMissCount = miss, readmissionCountdown = readmission)
 
   // Logical per-peer content, supplied as an explicitly UNSORTED list of pairs.
   private val perPeerPairs: List[(PeerId, PerPeerOperationalRecord)] = List(
-    pC -> record((1, 2), 4, 9L, Some(3L), Some(2)),
-    pA -> record((5, 7), 12, 2L, None, Some(1)),
-    pB -> record((9, 9), 0, 1L, Some(7L), None)
+    pC -> record(4, 9L, 0),
+    pA -> record(12, 2L, 3),
+    pB -> record(0, 1L, 0)
   )
 
   private val proofSizePairs: List[(SnapshotOrdinal, Int)] = List(
@@ -105,11 +97,10 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     ord(101L) -> 6
   )
 
-  // recentSigners: per-ordinal signer SET. Both the outer map keys (ordinals) and the inner set
-  // elements (peers) are supplied unsorted, so this exercises nested collection canonicalization.
-  private val signerPairs: List[(SnapshotOrdinal, List[PeerId])] = List(
-    ord(101L) -> List(pC, pA),
-    ord(100L) -> List(pB, pC, pA)
+  // penaltyUntil: per-peer absolute horizon, supplied unsorted.
+  private val penaltyPairs: List[(PeerId, SnapshotOrdinal)] = List(
+    pC -> ord(210L),
+    pA -> ord(205L)
   )
 
   private val endTimePairs: List[(SnapshotOrdinal, Long)] = List(
@@ -124,25 +115,25 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   private def buildOperationalState(
     perPeerOrder: List[(PeerId, PerPeerOperationalRecord)],
     proofOrder: List[(SnapshotOrdinal, Int)],
-    signerOrder: List[(SnapshotOrdinal, List[PeerId])],
+    penaltyOrder: List[(PeerId, SnapshotOrdinal)],
     endTimeOrder: List[(SnapshotOrdinal, Long)]
   ): ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.from(perPeerOrder),
-      recentProofSizes = SortedMap.from(proofOrder),
-      recentSigners = Some(SortedMap.from(signerOrder.map { case (o, ps) => o -> SortedSet.from(ps) })),
-      recentRoundEndTimes = Some(SortedMap.from(endTimeOrder))
+      recentCommitteeSizes = SortedMap.from(proofOrder),
+      recentRoundEndTimes = Some(SortedMap.from(endTimeOrder)),
+      penaltyUntil = Some(SortedMap.from(penaltyOrder))
     )
 
   private val operationalForward: ConsensusOperationalState =
-    buildOperationalState(perPeerPairs, proofSizePairs, signerPairs, endTimePairs)
+    buildOperationalState(perPeerPairs, proofSizePairs, penaltyPairs, endTimePairs)
 
-  // Reverse every collection field's insertion order, AND reverse the inner signer lists too.
+  // Reverse every collection field's insertion order.
   private val operationalReversed: ConsensusOperationalState =
     buildOperationalState(
       perPeerPairs.reverse,
       proofSizePairs.reverse,
-      signerPairs.reverse.map { case (o, ps) => o -> ps.reverse },
+      penaltyPairs.reverse,
       endTimePairs.reverse
     )
 
@@ -236,18 +227,10 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
       peerHistory = peerHistory
     )
 
-  // The signed peerHistory carried in a real proposal: recentRoundEndTimes is nulled and perPeer is
-  // reduced to explicit activeAdmissionScore records by `signedArtifactPeerHistory` before signing.
-  // We mirror that exact shape here so the snapshot fixture reflects the bytes that go over the wire.
+  // The signed peerHistory carried in a real proposal: perPeer is empty and recentRoundEndTimes is stripped by
+  // `signedArtifactPeerHistory` before signing. We mirror that exact shape here.
   private def signedShapePeerHistory(src: ConsensusOperationalState): ConsensusOperationalState =
-    src.copy(
-      perPeer = SortedMap.from(
-        src.perPeer.keysIterator.map { peerId =>
-          peerId -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(0))
-        }
-      ),
-      recentRoundEndTimes = None
-    )
+    src.copy(perPeer = SortedMap.empty, recentRoundEndTimes = None)
 
   private val snapshotForward: GlobalIncrementalSnapshot =
     buildSnapshot(rewardPairs, delegateRewardPairs, nextFacilitatorsList, Some(signedShapePeerHistory(operationalForward)))
@@ -378,15 +361,15 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   //      peerHistory                 Option[ConsensusOperationalState]                           see below
   //
   //    ConsensusOperationalState (peerHistory):
-  //      perPeer                     SortedMap[PeerId, PerPeerOperationalRecord]                 SORTED  (safe; signed bytes keep canonical score-only records)
-  //      recentProofSizes            SortedMap[SnapshotOrdinal, Int]                             SORTED  (safe, exercised)
-  //      recentSigners               Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]]       SORTED  (safe, exercised, nested)
+  //      perPeer                     SortedMap[PeerId, PerPeerOperationalRecord]                 SORTED  (safe; empty in signed bytes)
+  //      recentCommitteeSizes            SortedMap[SnapshotOrdinal, Int]                             SORTED  (safe, exercised)
+  //      penaltyUntil                Option[SortedMap[PeerId, SnapshotOrdinal]]                  SORTED  (safe, exercised)
   //      recentRoundEndTimes         Option[SortedMap[SnapshotOrdinal, Long]]                    SORTED  (safe; was an offender, now sorted + stripped from signed bytes)
   //
   //    RESULT: NO third plain-Map/plain-Set offender was found. Every collection in the reachable
   //    artifact tree is Sorted (or an intentionally ordered NonEmptyList). The two historical
-  //    offenders are Sorted now; recentRoundEndTimes is stripped and perPeer is reduced to canonical
-  //    score-only records by `signedArtifactPeerHistory`. If a future schema change introduces a plain `Map`/`Set` in a
+  //    offenders are Sorted now; recentRoundEndTimes is stripped and perPeer is emptied by
+  //    `signedArtifactPeerHistory`. If a future schema change introduces a plain `Map`/`Set` in a
   //    value position, the relevant per-field assertion below (and tests 1-2) will start failing.
   // ============================================================================================
 
@@ -403,15 +386,13 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     val delegateRev: SortedMap[PeerId, SortedMap[Address, Amount]] =
       SortedMap.from(delegateRewardPairs.reverse.map { case (p, m) => p -> SortedMap.from(m.reverse) })
 
-    // recentProofSizes : SortedMap[SnapshotOrdinal, Int]
+    // recentCommitteeSizes : SortedMap[SnapshotOrdinal, Int]
     val proofsFwd: SortedMap[SnapshotOrdinal, Int] = SortedMap.from(proofSizePairs)
     val proofsRev: SortedMap[SnapshotOrdinal, Int] = SortedMap.from(proofSizePairs.reverse)
 
-    // recentSigners : SortedMap[SnapshotOrdinal, SortedSet[PeerId]] (nested set)
-    val signersFwd: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] =
-      SortedMap.from(signerPairs.map { case (o, ps) => o -> SortedSet.from(ps) })
-    val signersRev: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] =
-      SortedMap.from(signerPairs.reverse.map { case (o, ps) => o -> SortedSet.from(ps.reverse) })
+    // penaltyUntil : SortedMap[PeerId, SnapshotOrdinal]
+    val signersFwd: SortedMap[PeerId, SnapshotOrdinal] = SortedMap.from(penaltyPairs)
+    val signersRev: SortedMap[PeerId, SnapshotOrdinal] = SortedMap.from(penaltyPairs.reverse)
 
     // recentRoundEndTimes : SortedMap[SnapshotOrdinal, Long]
     val endTimesFwd: SortedMap[SnapshotOrdinal, Long] = SortedMap.from(endTimePairs)
@@ -437,8 +418,8 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     } yield
       expect(rf == rr, "rewards SortedSet diverged across order")
         .and(expect(df == dr, "delegateRewards nested SortedMap diverged across order"))
-        .and(expect(pf == pr, "recentProofSizes SortedMap diverged across order"))
-        .and(expect(sf == sr, "recentSigners nested SortedMap/SortedSet diverged across order"))
+        .and(expect(pf == pr, "recentCommitteeSizes SortedMap diverged across order"))
+        .and(expect(sf == sr, "penaltyUntil SortedMap diverged across order"))
         .and(expect(ef == er, "recentRoundEndTimes SortedMap diverged across order"))
         .and(expect(ppf == ppr, "perPeer SortedMap diverged across order"))
   }
@@ -500,7 +481,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
   test("golden anchor: ConsensusOperationalState serialized hash is pinned") { res =>
     implicit val (j, h) = res
-    val expected = Hash("6ffc82508644a0a0d1f2390390617c8e991c7468592f0d4dcf0de6d6fafcd556")
+    val expected = Hash("3f524dd63cd1a27cc5ce57f15e138bb8020fbf5cc9cec5245a843a7d2ff15c69")
     h.hash(operationalForward).map { actual =>
       expect.same(expected, actual)
     }
@@ -508,7 +489,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
   test("golden anchor: GlobalIncrementalSnapshot serialized hash is pinned") { res =>
     implicit val (j, h) = res
-    val expected = Hash("f09f1a3c42721dd70da6fd6791c066434657a918b9d2bb909826e0b9858b82dd")
+    val expected = Hash("4374e0471683db48971c611edbb393f9c533a70a93ec4db78627882983de8a20")
     h.hash(snapshotForward).map { actual =>
       expect.same(expected, actual)
     }

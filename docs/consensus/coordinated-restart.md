@@ -57,9 +57,10 @@ Coordinator set MUST be `>= 2` so a single compromised coordinator can't unilate
 
 ### RestartGroup selection (cluster-computed)
 
-Drawing on data the cluster already has:
-- `lastOutcome.peerQuality.ratio` (existing)
-- `lastOutcome.peerSelfHealth` (post-v15)
+Drawing on data the cluster had when this was written (`peerQuality` and
+`peerSelfHealth` were deleted by ADR-0036; only `cumulativeMissCounts` remains):
+- `lastOutcome.peerQuality.ratio` (removed)
+- `lastOutcome.peerSelfHealth` (removed)
 - `cumulativeMissCounts` (existing)
 - Coordinator manual override list
 
@@ -110,7 +111,7 @@ The closest match is Cosmos `halt_height`. Worth reading their implementation be
 
 ## Scheduling
 
-The v15 self-health throttle precondition has shipped (see [self-health-throttle.md](self-health-throttle.md)). Remaining gates before this work is picked up:
+The v15 self-health throttle precondition shipped (see [self-health-throttle.md](self-health-throttle.md)) but was later removed by [ADR-0036](../adr/0036-single-frozen-voting-set.md): self-health no longer affects consensus, so this proposal would need a new precondition. Remaining gates before this work is picked up:
 - node-pilot owner reviews the proposal and signs off on the SDK surface (node-pilot still issues hard kills today).
 - Confirm the wedge pattern this proposal targets is not already covered by the chronic-classifier / self-health demotion paths now in place; if hardware-marginal peers are being demoted or evicted automatically, the marginal value of coordinated restart drops.
 
@@ -120,4 +121,4 @@ Estimated scope: ~2-3 weeks of focused work plus node-pilot SDK changes.
 
 - [[project_v14_overnight_analysis_may15]] -- the wedge pattern this proposal helps avoid
 - [[project_v18_abandon_gate_may11]] -- the gate that needs the coordinated-restart bypass
-- docs/consensus/self-health-throttle.md -- the v15 work this proposal builds on
+- docs/consensus/self-health-throttle.md -- the v15 work this proposal built on (retired by ADR-0036)

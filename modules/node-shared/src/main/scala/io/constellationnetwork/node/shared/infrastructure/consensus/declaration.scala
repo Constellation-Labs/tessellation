@@ -10,7 +10,6 @@ import io.constellationnetwork.ext.codecs.NonEmptySetCodec
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -41,13 +40,6 @@ object declaration {
   private def lazySignedDecoder[A](valueDecoder: => Decoder[A]): Decoder[Signed[A]] =
     Decoder.instance(cursor => Signed.decoder[A](valueDecoder).tryDecode(cursor))
 
-  // v15: explicit Show for Proposal.observedSelfHealth resolves an ambiguity between
-  // `cats.Show.catsShowForSortedMap` and the package-object `showSortedMapAsList` that both
-  // match the field's `SortedMap[PeerId, SelfHealthHint]` type during derevo's `@derive(show)`
-  // chain. Local scope wins, so this fixes the derivation without changing wire format.
-  implicit val showSortedSelfHealth: Show[SortedMap[PeerId, SelfHealthHint]] =
-    Show.show(_.toList.map { case (k, v) => s"${k.show}->${v.show}" }.mkString("{", ",", "}"))
-
   @derive(eqv, show, encoder, decoder)
   sealed trait PeerDeclaration {
     def facilitatorsHash: Hash
@@ -63,14 +55,6 @@ object declaration {
     lastGlobalSnapshotOrdinal: SnapshotOrdinal,
     lastSnapshotHash: Hash,
     consensusConfigHash: Option[Hash] = None,
-    // Self-health throttle, see docs/consensus/self-health-throttle.md.
-    // The peer's own current `SelfHealthHint` derived from `LocalHealthMonitor`. The leader
-    // aggregates these into `Proposal.observedSelfHealth` for consensus-agreed propagation;
-    // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
-    // peers to tier 2. Optional with default None so the field is wire-compatible with older
-    // versions, although distinct advertised versions (or `CL_VERSION_HASH` values) are rejected
-    // by the join-time `versionHash` gate.
-    selfHealthHint: Option[SelfHealthHint] = None,
     // v19 phase 2: per-facilitator wall-clock at signing time (raw millis, no bucketing).
     // Acquired via `Clock[F].realTime.map(_.toMillis)` in the Facility build effect. The
     // leader-elected outcome's `consensusEndTime` is the median of these values across the
@@ -124,7 +108,7 @@ object declaration {
           s"${qc.view}|${qc.proposalHash.value}|${qc.facilitatorsHash.value}"
         }
         val certifiedQcPart = v.highestKnownCertifiedQc.fold("-") { qc =>
-          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartCoreHash.value}"
+          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartFacilitatorsHash.value}"
         }
         (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart, certifiedQcPart)
       }
@@ -247,7 +231,7 @@ object declaration {
           s"${qc.view}|${qc.proposalHash.value}|${qc.facilitatorsHash.value}"
         }
         val certifiedQcPart = v.highestKnownCertifiedQc.fold("-") { qc =>
-          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartCoreHash.value}"
+          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartFacilitatorsHash.value}"
         }
         (
           v.fromView,
@@ -494,33 +478,8 @@ object declaration {
     // evictionCertificates. Defaults empty for forward compatibility — old proposals
     // written before B2 round-trip with an empty admission list.
     admissionCertificates: List[AdmissionCertificate] = List.empty,
-    // v7 (flaky-byzantine threat model): leader's positive observation of which
-    // round-start facilitators sent a Facility declaration during this round's
-    // facility-collection window. Bound by the leader's signed rumor envelope
-    // (RumorValidator.scala:50 — signers.contains(rumor.origin)). Followers
-    // validate that observedResponders ⊆ roundStartFacilitators. Consumed at
-    // round-finalize to update lastOutcome.peerQuality with positive
-    // participation evidence — fixes the v3-codex-flagged "silent peers score
-    // (1,1)" blindness where any non-fork-evicted facilitator was credited
-    // regardless of whether they actually sent a Facility. List[PeerId] sorted
-    // at proposal-build time (mirrors evictionCertificates / admissionCertificates
-    // sort-at-construction pattern) for deterministic proposal-hash agreement.
-    // Defaults empty for old-format compatibility (cold-restart hard fork in
-    // practice).
-    observedResponders: List[PeerId] = List.empty,
-    // Self-health throttle: leader's canonical view of each observed
-    // responder's `SelfHealthHint`, aggregated from the Facilities collected this round.
-    // Signed into the Proposal so all followers adopt the same map on accept; this is what
-    // makes the hint consensus-agreed for the next round's `selectLeaderWeighted`. Peers
-    // absent from the map default to `Healthy` at read time.
-    //
-    // `SortedMap` (not `Map`) so circe's derived encoder iterates by `PeerId` order and
-    // produces byte-identical JSON across nodes -- a `Map` (HashMap-backed) iterator order
-    // is hash-bucket-dependent and would diverge between leaders running on different JVMs
-    // or with different mutation histories, breaking the proposal-hash quorum check.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
     // Canonical open-admission nomination for the NEXT round. The leader chooses one
-    // entropy-ranked peer from the candidate advertisements in the Facilities it collected;
+    // rotation-selected peer (DeterministicRotation) from the candidate advertisements in the Facilities it collected;
     // followers adopt this exact value on Proposal acceptance. Carrying one nominee avoids
     // asking next-round voters to rank node-local candidate universes, which can differ at
     // quorum-crossing time. None is the backward-compatible/pre-upgrade value.
@@ -530,7 +489,7 @@ object declaration {
     // does not re-litigate a new Facility subset, so the field is absent on that path. Option
     // preserves the exact pre-v35 JSON shape under dropNullValues.
     triggerEvidence: Option[List[Signed[TriggerStatement]]] = None,
-    // v35: complete, view-independent semantics certified by the frozen round-start Core.
+    // v35: complete, view-independent semantics certified by the frozen round-start committee.
     // None decodes legacy/pre-activation proposals; v35 validation rejects None.
     proposalValue: Option[ProposalValue] = None
   ) extends PeerDeclaration
@@ -543,11 +502,11 @@ object declaration {
     view: Long,
     proposalHash: Hash,
     // v35 fields are separate from the unchanged bare-artifact signature above. A valid
-    // ProposalQC proves the semantic value; a CoreCommit proves this Core signer received
+    // ProposalQC proves the semantic value; a Commit proves this committee signer received
     // and verified that QC before artifact finalization.
     proposalValueHash: Option[Hash] = None,
     proposalQc: Option[CertifiedProposalQC] = None,
-    coreCommit: Option[CoreCommit] = None
+    commit: Option[Commit] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

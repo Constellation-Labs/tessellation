@@ -29,7 +29,7 @@ import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.RollbackStartPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
-import io.constellationnetwork.node.shared.infrastructure.consensus.{CertifiedConsensusGenesis, ConsensusLog, TierTransitions}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{CertifiedConsensusGenesis, ConsensusLog}
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
@@ -49,7 +49,7 @@ import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops._
-import io.constellationnetwork.security.signature.{Signed, SignedValidator}
+import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -106,16 +106,6 @@ object Main
     */
   private[dag] def rollbackAnchorHasCollateral(balance: Option[Balance], required: Amount): Boolean =
     balance.getOrElse(Balance.empty).satisfiesCollateral(required)
-
-  private[dag] final case class ConflictingRecoverySeedAnchors(
-    selected: RecoveryCheckpoint,
-    configured: RecoveryCheckpoint
-  ) extends NoStackTrace {
-    override def getMessage: String =
-      s"GL0 recovery seed anchor conflicts with configured recovery checkpoint: " +
-        s"selected=(${selected.network},${selected.ordinal.value.value},${selected.snapshotHash.value}) " +
-        s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
-  }
 
   private[dag] case object RecoverySeedConfiguredWithoutTrustRoot extends NoStackTrace {
     override def getMessage: String =
@@ -317,13 +307,6 @@ object Main
       RecoverySeedAtCanonicalGenesisRootUnsupported(anchor, activation)
     )
 
-  private[dag] def validateRecoverySeedAnchorCompatibility(
-    selected: RecoveryCheckpoint,
-    configured: Option[RecoveryCheckpoint]
-  ): Either[ConflictingRecoverySeedAnchors, Unit] =
-    configured.fold[Either[ConflictingRecoverySeedAnchors, Unit]](Right(())) { checkpoint =>
-      Either.cond(selected === checkpoint, (), ConflictingRecoverySeedAnchors(selected, checkpoint))
-    }
   private[dag] def validateRecoverySeedAnchorSource(
     source: RollbackLoader.Source
   ): Either[RecoverySeedUnsupportedAnchorSource, Unit] =
@@ -347,38 +330,6 @@ object Main
     else if (CertifiedConsensusGenesis.isActiveFromGenesis(activationKey))
       Set(CertifiedConsensusGenesis.FirstIncrementalOrdinal)
     else Set(SnapshotOrdinal.unsafeApply(activationKey))
-
-  private[dag] final case class RecentCoreReconstructionDiagnostic(
-    source: String,
-    entries: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]
-  )
-
-  private[dag] def reconstructRecentCoreFacilitatorsDiagnostic(
-    peerHistorySidecar: PeerHistorySidecarStorage[IO],
-    rollbackOrdinal: SnapshotOrdinal,
-    rollbackPeerHistory: Option[ConsensusOperationalState],
-    windowSize: Int
-  ): IO[RecentCoreReconstructionDiagnostic] = {
-    def coreFrom(state: ConsensusOperationalState): SortedSet[PeerId] =
-      SortedSet.from(state.perPeer.iterator.collect {
-        case (pid, record) if record.tier.contains(TierTransitions.Core) => pid
-      })
-
-    val start = math.max(0L, rollbackOrdinal.value.value - math.max(0, windowSize - 1).toLong)
-    val ordinals = (start to rollbackOrdinal.value.value).toList.flatMap(SnapshotOrdinal(_))
-
-    ordinals.traverse { ordinal =>
-      peerHistorySidecar.read(ordinal).map(_.map(state => ordinal -> coreFrom(state)))
-    }
-      .map(entries => SortedMap.from(entries.flatten))
-      .map { sidecarEntries =>
-        if (sidecarEntries.nonEmpty) RecentCoreReconstructionDiagnostic("sidecar", sidecarEntries)
-        else
-          rollbackPeerHistory
-            .map(state => RecentCoreReconstructionDiagnostic("replayed", SortedMap(rollbackOrdinal -> coreFrom(state))))
-            .getOrElse(RecentCoreReconstructionDiagnostic("unavailable", SortedMap.empty))
-      }
-  }
 
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
@@ -673,14 +624,6 @@ object Main
         )
         .asResource
 
-      recoveryCheckpoint <- HasherSelector[IO].withCurrent { implicit hasher =>
-        RecoveryCheckpointLoader.load[IO](
-          cfg.recovery.checkpointPath,
-          nodeShared.seedlist.map(_.map(_.peerId)),
-          cfg.environment.toString,
-          SignedValidator.make[IO]
-        )
-      }.asResource
       programs = Programs.make[IO, Run](
         sharedPrograms,
         storages,
@@ -694,8 +637,7 @@ object Main
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot,
         sharedStorages.mptStore,
-        nodeShared.seedlist.map(_.map(_.peerId)),
-        recoveryCheckpoint
+        nodeShared.seedlist.map(_.map(_.peerId))
       )
 
       rumorHandler = RumorHandlers
@@ -911,10 +853,6 @@ object Main
                       hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
                       _ <- validateRecoverySeedPublicDiscoverability(snapshot.ordinal, activation).liftTo[IO]
                       _ <- validateRecoverySeedRollbackHash(m.rollbackHash, hashedSnapshot.hash).liftTo[IO]
-                      _ <- validateRecoverySeedAnchorCompatibility(
-                        RecoveryCheckpoint(cfg.environment.toString, snapshot.ordinal, hashedSnapshot.hash),
-                        recoveryCheckpoint
-                      ).liftTo[IO]
                       ineligibleSeedPeers <- seed.committee.toList.filterA { peerId =>
                         peerId.toPublic[IO].map(_.toAddress).map { address =>
                           !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
@@ -1051,9 +989,6 @@ object Main
                   // dimensions on the outcome. A peer absent from `perPeer` is treated as
                   // `PerPeerOperationalRecord.empty` (= no penalty, no probation, etc.) on the
                   // consumer side; here we only emit non-default entries to keep the maps small.
-                  seedPeerQuality = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                    case (pid, r) if r.quality != ((0, 0)) => pid -> r.quality
-                  })
                   seedRemovalPenalties = SortedMap.from(seedOperational.perPeer.iterator.collect {
                     case (pid, r) if r.removalPenalty > 0 => pid -> r.removalPenalty
                   })
@@ -1063,94 +998,19 @@ object Main
                   seedReadmissionCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
                     case (pid, r) if r.readmissionCountdown > 0 => pid -> r.readmissionCountdown
                   })
-                  seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                    case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
-                  })
-                  // v16: per-peer cumulative view-change-caused. Seeded only when non-zero so
-                  // the persisted map stays small. Absent peers default to 0 at the v16 filter
-                  // call-site, matching the pre-v16 "no penalty" semantic.
-                  // PerPeerOperationalRecord.viewChangesCaused is Option[Long] (back-compat with
-                  // pre-v16 JSON), so unwrap with the same > 0 filter.
-                  seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                    case (pid, r) => r.viewChangesCaused.filter(_ > 0L).map(v => pid -> v)
-                  })
                   // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
                   // classification matches the running cluster), otherwise seed with the rollback
                   // snapshot's proof count -- preserves pre-v20 behavior.
-                  seedRecentProofSizes =
-                    if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
+                  seedRecentCommitteeSizes =
+                    if (seedOperational.recentCommitteeSizes.nonEmpty) seedOperational.recentCommitteeSizes
                     else SortedMap(snapshot.ordinal -> rollbackProofSize)
-                  // Recent-signers window unwrapped from the Option. Snapshots written before
-                  // the field existed decode None -> empty map; FacilitatorSelector treats an
-                  // empty window as bootstrap (use full eligibility until the window fills).
-                  seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
-                  // v19: per-peer tier classification seeded from `PerPeerOperationalRecord.tier`.
-                  // Tier is Option[Int], so peers with `None` are absent from this map and
-                  // CommitteeBuilder defaults them to bootstrap-Tier-2 at consume time.
-                  seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                    case (pid, r) => r.tier.map(t => pid -> t)
-                  })
-                  seedActiveAdmissionScores = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                    case (pid, r) => r.activeAdmissionScore.filter(_ > 0).map(score => pid -> score)
-                  })
                   // v19 phase 2: view-from-time window unwrapped from the Option. Snapshots
                   // written before the field existed decode None -> empty map; the next
                   // round's view derivation falls back to phase 1 `viewChangeVotes.maxToView`
                   // until the window populates.
                   seedRecentRoundEndTimes =
                     seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
-                  // Stage 4: controller-evidence window + cert-anchored penalty horizons,
-                  // kept Option-shaped end to end (the outcome fields are Option too).
-                  // Pre-deploy snapshots decode None -> the evidence read side stays in its
-                  // carried-map fallback regime until the window refills; `filter(_.nonEmpty)`
-                  // normalizes a defensive Some(empty) back to None.
-                  seedControllerEvidence = seedOperational.controllerEvidence.filter(_.nonEmpty)
                   seedPenaltyUntil = seedOperational.penaltyUntil.filter(_.nonEmpty)
-                  recentCoreDiagnostic <- recoverySeed.fold(
-                    reconstructRecentCoreFacilitatorsDiagnostic(
-                      peerHistorySidecar,
-                      snapshot.value.ordinal,
-                      snapshot.value.peerHistory,
-                      loadedConsensusConfig.tighteningWindow
-                    )
-                  )(_ =>
-                    IO.pure(
-                      RecentCoreReconstructionDiagnostic(
-                        "operator_recovery_seed_flush",
-                        SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]]
-                      )
-                    )
-                  )
-                  recentCoreSummary = recentCoreDiagnostic.entries.toList.map {
-                    case (ordinal, core) =>
-                      s"${ordinal.value.value}:${core.size}:${core.toList.map(ConsensusLog.pid).mkString(",")}"
-                  }
-                    .mkString(";")
-                  _ <- ConsensusLog.info(
-                    logger,
-                    ConsensusLog.Category.Recovery,
-                    snapshot.ordinal.toString,
-                    "n/a",
-                    ConsensusLog.Event.RollbackBootstrapActive,
-                    "reason" -> "recent_core_facilitators_reconstruction",
-                    "source" -> recentCoreDiagnostic.source,
-                    "entries" -> recentCoreDiagnostic.entries.size.toString,
-                    "windowSize" -> loadedConsensusConfig.tighteningWindow.toString,
-                    "method" -> "best_effort_effective_tier_core",
-                    "summary" -> recentCoreSummary
-                  )
-                  _ <- Metrics[IO].incrementCounter(
-                    "dag_consensus_recent_core_reconstruction_total",
-                    Seq(Metrics.unsafeLabelName("source") -> recentCoreDiagnostic.source)
-                  )
-                  _ <- Metrics[IO].updateGauge(
-                    "dag_consensus_recent_core_reconstruction_entries",
-                    recentCoreDiagnostic.entries.size.toLong
-                  )
-                  _ <- Metrics[IO].updateGauge(
-                    "dag_consensus_recent_core_reconstruction_latest_core_size",
-                    recentCoreDiagnostic.entries.lastOption.map(_._2.size.toLong).getOrElse(0L)
-                  )
                   legacyRollbackOutcome = GlobalConsensusOutcome(
                     snapshot.ordinal,
                     Facilitators(bootstrapFacilitators),
@@ -1159,17 +1019,10 @@ object Main
                     EligibleFacilitators(bootstrapFacilitators),
                     Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
                     removalPenalties = seedRemovalPenalties,
-                    deferralCountdown = seedDeferralCountdown,
-                    peerQuality = seedPeerQuality,
                     cumulativeMissCounts = seedCumulativeMissCounts,
-                    recentProofSizes = seedRecentProofSizes,
+                    recentCommitteeSizes = seedRecentCommitteeSizes,
                     readmissionCountdown = seedReadmissionCountdown,
-                    peerViewChanges = seedPeerViewChanges,
-                    recentSigners = seedRecentSigners,
-                    peerTiers = seedPeerTiers,
-                    activeAdmissionScores = seedActiveAdmissionScores,
                     recentRoundEndTimes = seedRecentRoundEndTimes,
-                    controllerEvidence = seedControllerEvidence,
                     penaltyUntil = seedPenaltyUntil
                   )
                   rollbackOutcome = recoverySeed.fold(certifiedRollbackOutcome.getOrElse(legacyRollbackOutcome))(seed =>
@@ -1178,7 +1031,7 @@ object Main
                   normalRollbackStartPolicy <- {
                     val committee = SortedSet.from(rollbackOutcome.facilitators.value)
                     val postBootstrap =
-                      rollbackOutcome.recentProofSizes.values.exists(_ >= loadedConsensusConfig.bootstrapCompleteProofsThreshold)
+                      BootstrapCommittee.reached(rollbackOutcome.recentCommitteeSizes.values)
 
                     if (recoveryCommittee.nonEmpty || !postBootstrap)
                       (RollbackStartPolicy.LegacyDeferred: RollbackStartPolicy).pure[IO]
@@ -1285,7 +1138,7 @@ object Main
                                 // Genesis path — a fresh chain start, always classify as bootstrap.
                                 // Seed window with the genesis snapshot's proof count (typically 1 for
                                 // genesis, which correctly triggers warmup for the initial cluster bring-up).
-                                genesisRecentProofSizes = SortedMap(
+                                genesisRecentCommitteeSizes = SortedMap(
                                   signedFirstIncrementalSnapshot.ordinal -> signedFirstIncrementalSnapshot.proofs.size.toInt
                                 )
                                 _ <- services.consensus.manager
@@ -1305,7 +1158,7 @@ object Main
                                         Hash.empty,
                                         hashedSnapshot.hash
                                       ),
-                                      recentProofSizes = genesisRecentProofSizes
+                                      recentCommitteeSizes = genesisRecentCommitteeSizes
                                     ),
                                     // Genesis is also a checkpoint-serving bootstrap. If the
                                     // genesis node starts round 2 immediately, it can finalize a

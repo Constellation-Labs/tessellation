@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 
 import derevo.cats.{eqv, show}
@@ -33,19 +32,6 @@ object PeerDeclarationsArbitraries {
   implicit val admissionCertsListArb: Arbitrary[List[AdmissionCertificate]] =
     Arbitrary(Gen.const(List.empty))
 
-  // v15 self-health throttle. Picks uniformly from the three states.
-  implicit val selfHealthHintArb: Arbitrary[SelfHealthHint] =
-    Arbitrary(Gen.oneOf(SelfHealthHint.values))
-
-  // `observedSelfHealth` map and `selfHealthHint` option fields on Facility/Proposal default to
-  // empty / None in property-based tests because the map's keyset is otherwise unrelated to the
-  // facilitator set and would dominate generation cost without exercising consensus paths.
-  implicit val observedSelfHealthArb: Arbitrary[Map[PeerId, SelfHealthHint]] =
-    Arbitrary(Gen.const(Map.empty))
-
-  implicit val selfHealthHintOptArb: Arbitrary[Option[SelfHealthHint]] =
-    Arbitrary(Gen.const(None))
-
   // V35 certification fields are cryptographic fixtures. Generic PeerDeclarations properties exercise the legacy/default wire shape;
   // focused certification suites construct real values and proofs explicitly.
   implicit val proposalValueOptArb: Arbitrary[Option[ProposalValue]] =
@@ -54,7 +40,7 @@ object PeerDeclarationsArbitraries {
   implicit val certifiedProposalQcOptArb: Arbitrary[Option[CertifiedProposalQC]] =
     Arbitrary(Gen.const(None))
 
-  implicit val coreCommitOptArb: Arbitrary[Option[CoreCommit]] =
+  implicit val commitOptArb: Arbitrary[Option[Commit]] =
     Arbitrary(Gen.const(None))
 
   implicit val triggerStatementOptArb: Arbitrary[Option[io.constellationnetwork.security.signature.Signed[TriggerStatement]]] =

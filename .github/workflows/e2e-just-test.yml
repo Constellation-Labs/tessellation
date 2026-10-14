@@ -114,7 +114,7 @@ jobs:
           # producing snapshots while a seated peer is isolated. Phase 3 then wedges: on restore,
           # peers re-graft the returning node into the gossip mesh but leave it at
           # WaitingForObserving in their cluster registry, while the node itself reports Ready.
-          # Consensus derives committees from peerHistory rather than that registry, so it can elect
+          # Consensus derived committees from signed state rather than that registry, so it could elect
           # the returning node LEADER -- whose Proposal/Signature declarations every peer then
           # ignores. Observed locally 2026-07-31: ordinal 41 held for 900s with all 5 nodes Ready and
           # at tip. Re-enable once that rejoin/leader-eligibility mismatch is fixed; the entry below

@@ -94,7 +94,7 @@ class StateTransitions[
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, peerQualityOf, queue, remover, storage, updater}
+  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, queue, remover, storage, updater}
   import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
 
   private def runOutcomeHook(stage: String, outcome: Outcome)(hook: Outcome => F[Unit]): F[Unit] =
@@ -112,51 +112,15 @@ class StateTransitions[
       )
     } yield ()
 
-  /** Deterministic witness pool for B1/B2/VCC certificate assembly.
-    *
-    * The pool unions consensus-agreed sets, then removes `target`:
-    *
-    *   1. `state.roundStartFacilitators` -- the frozen committee for this round. 2. `state.eligibleFacilitators` -- peers eligible to
-    *      facilitate THIS round (chronic-filtered subset of the previous outcome's participants). Always non-empty for active rounds. 3.
-    *      Peers in `lastOutcome.peerQuality` with `participated >= minParticipationObservations` -- anyone who has actually voted in at
-    *      least the observation-floor number of past rounds, regardless of whether they're currently in the chronic-excluded set.
-    *
-    * Determinism guarantees: both inputs are projections of `lastOutcome` which is signed and propagated as part of the previous snapshot.
-    * `minParticipationObservations` is in `ConsensusConfig.deterministicConfigHash`. Every honest node therefore computes the
-    * byte-identical witness pool from the same lastOutcome. The set semantics (Set[PeerId]) eliminates ordering as a determinism concern;
-    * cert builders sort the resulting votes into a SortedSet so serialization is stable downstream.
-    *
-    * Why widen at all: in the canonical "committee = previous signers" pattern, when 4 of 6 committee members are offline or stuck in
-    * `WaitingForDownload`, the round can't progress AND the eviction/admission cert that would normally rotate the committee also can't
-    * assemble (same supermajority gate). Letting peers with proven prior participation witness the cert -- without giving them a vote in
-    * the round itself -- breaks the deadlock without weakening the round's BFT guarantee. The wider pool only matters when there ARE peers
-    * outside the committee with peerQuality history; in normal ops with a healthy committee it has no practical effect because the
-    * committee dominates the union.
-    *
-    * Why this doesn't drift in steady state: peerQuality grows monotonically (entries are added, counters increment); it does not
-    * arbitrarily reshape. The wider pool is therefore a monotone function of round history and consensus-agreed observations.
-    *
-    * Returns the EXCLUSIVE pool (target removed). Callers do not need to filter again.
-    */
-  private[state] def widerWitnessPool(state: ConsensusState[Key, Status, Outcome, Kind], target: PeerId): Set[PeerId] =
-    WitnessPool
-      .forTarget(
-        state.eligibleFacilitators.value.toSet,
-        peerQualityOf(state.lastOutcome),
-        config.minParticipationObservations,
-        target
-      )
-      .union(state.roundStartFacilitators.value.toSet - target)
-
   /** The one certificate-voter universe: VCC/TC certificates are made only from uniquely identified frozen-Core voters and require the same
-    * BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC
-    * paths from drifting onto different safety universes.
+    * BFT quorum function as ProposalQC/CommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC paths
+    * from drifting onto different safety universes.
     */
   private def certificateQuorum[A](
     state: ConsensusState[Key, Status, Outcome, Kind],
     votes: Map[PeerId, Signed[A]]
   ): StateTransitions.CertificateQuorum[A] = {
-    val core = state.coreFacilitators.value.toSet
+    val core = state.roundStartFacilitators.value.toSet
     val coreVotes = votes.collect {
       case (origin, signed)
           if signed.proofs.size === 1L &&
@@ -164,7 +128,7 @@ class StateTransitions[
             core.contains(origin) =>
         origin -> signed
     }
-    val required = CertifiedConsensus.requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+    val required = CertifiedConsensus.requiredQuorum(core.size, config.quorumThresholdFraction)
 
     StateTransitions.CertificateQuorum(coreVotes, core, required, coreVotes.size >= required)
   }
@@ -708,7 +672,7 @@ class StateTransitions[
       .exists(kind =>
         resources.peerDeclarationsMap.exists {
           case (peerId, declarations) =>
-            state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+            state.roundStartFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
         }
       )
     val localProgress = phaseIndex == 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
@@ -780,12 +744,8 @@ class StateTransitions[
                 )
             case Right(vcc) =>
               val viewMembershipPolicy = ctx.membershipPolicy
-              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(
-                state.coreFacilitators.value,
-                state.facilitators.value,
-                state.roundStartFacilitators.value
-              )
-              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(state.roundStartFacilitators.value)
+              val newLeader = LeaderSchedule.leader(leaderPool, ctx.roundIndexOf(state.key), toView.toLong)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
                 new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
@@ -839,7 +799,7 @@ class StateTransitions[
                     "toView" -> toView.toString,
                     "votes" -> votes.size.toString,
                     "quorum" -> q.toString,
-                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                    "leaderPool" -> (if (leaderPool == state.roundStartFacilitators.value) "core" else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
                     "statusReset" -> resetStatus.isDefined.toString
@@ -936,7 +896,6 @@ class StateTransitions[
               val viewMembershipPolicy = ctx.membershipPolicy
               val timeoutMembership = viewMembershipPolicy.timeoutMembership(
                 facilitators = currentActive,
-                coreFacilitators = state.coreFacilitators.value,
                 roundStartFacilitators = state.roundStartFacilitators.value,
                 timeoutVoters = reasonVotes.keySet,
                 shrinkFloor = shrinkFloor
@@ -944,7 +903,7 @@ class StateTransitions[
               val effectiveActive = timeoutMembership.evaluatedActive
               val shrunk = timeoutMembership.shrinkApplied
               val leaderPool = timeoutMembership.leaderPool
-              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val newLeader = LeaderSchedule.leader(leaderPool, ctx.roundIndexOf(state.key), toView.toLong)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
                 new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
@@ -960,12 +919,7 @@ class StateTransitions[
                           activeAfterCertifiedShrink,
                           s.roundStartFacilitators.value
                         )
-                        val coreAfterCertifiedShrink =
-                          if (timeoutMembership.shrinkApplied) timeoutMembership.coreFacilitators else s.coreFacilitators.value
-                        val membershipState = s.copy(
-                          facilitators = Facilitators(canonicalFacilitators),
-                          coreFacilitators = CoreFacilitators(coreAfterCertifiedShrink)
-                        )
+                        val membershipState = s.copy(facilitators = Facilitators(canonicalFacilitators))
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
                             membershipState.copy(
@@ -1008,7 +962,7 @@ class StateTransitions[
                     "votes" -> reasonVotes.size.toString,
                     "quorum" -> q.toString,
                     "leaderPool" -> (if (shrunk) "certified_shrink"
-                                     else if (leaderPool == state.coreFacilitators.value) "core"
+                                     else if (leaderPool == state.roundStartFacilitators.value) "core"
                                      else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
@@ -1162,11 +1116,11 @@ class StateTransitions[
           // participants from peerQuality), but the LIVENESS denominator is Core-sized so
           // a leader assembling with q Core-derived signatures will validate against
           // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.coreFacilitators.value.size
+          val n = state.roundStartFacilitators.value.size
           val atomicReplacement =
             ctx.membershipPolicy.allowsCertifiedAtomicReplacement
           val q =
-            if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
+            if (atomicReplacement) CertifiedConsensus.requiredQuorum(n, config.quorumThresholdFraction)
             else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
@@ -1190,15 +1144,7 @@ class StateTransitions[
                     // prevents a damaged Core committee from making its own repair impossible.
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
-                    val witnessPool =
-                      if (atomicReplacement) state.coreFacilitators.value.toSet - target
-                      else
-                        EvictionVoterPool.select(
-                          target,
-                          state.tier1Facilitators.value.contains(target),
-                          state.coreFacilitators.value.toSet,
-                          widerWitnessPool(state, target)
-                        )
+                    val witnessPool = EvictionVoterPool.select(target, state.roundStartFacilitators.value.toSet)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
@@ -1288,27 +1234,15 @@ class StateTransitions[
           // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
           // full rationale on decoupling the Core-sized liveness quorum from the broad
           // signing committee. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.coreFacilitators.value.size
-          val requiresCoreAdmissionCertification =
-            ctx.membershipPolicy.allowsCertifiedAtomicReplacement
-          val q = AdmissionVoterPool.requiredQuorum(
-            n,
-            config.quorumThresholdFraction,
-            requiresCoreAdmissionCertification
-          )
+          val n = state.roundStartFacilitators.value.size
+          val q = AdmissionVoterPool.requiredQuorum(n, config.quorumThresholdFraction)
           // Open expansion is certified by Core only: Tier 1 remains outside the liveness
           // machinery and cannot become necessary for committee growth. The legacy probation
           // path retains its wider deterministic witness pool. Under certified atomic membership,
           // however, every admission-only transition changes the Core-certified proposal value,
           // so probation ACS assembly is Core-certified too.
           val isProbationReadmission = ctx.probationPeersOf(state.lastOutcome).contains(target)
-          val voterPool = AdmissionVoterPool.select(
-            target,
-            isProbationReadmission,
-            requiresCoreAdmissionCertification,
-            state.coreFacilitators.value.toSet,
-            widerWitnessPool(state, target)
-          )
+          val voterPool = AdmissionVoterPool.select(target, state.roundStartFacilitators.value.toSet)
           val eligibleVotes = votes.filter { case (voter, _) => voterPool.contains(voter) }
 
           if (eligibleVotes.size >= q) {
@@ -1533,20 +1467,6 @@ class StateTransitions[
           unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
         )
       )
-      responders = newState.observedResponders.value.toSet
-      committee = newState.roundStartFacilitators.value
-      _ <-
-        if (responders.isEmpty || committee.isEmpty) Async[F].unit
-        else {
-          val peerIdLabel = unsafeLabelName("peer_id")
-          committee.toList.traverse_ { pid =>
-            val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
-            if (responders.contains(pid))
-              Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
-            else
-              Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
-          }
-        }
     } yield ()
   }
 
@@ -3133,8 +3053,8 @@ object StateTransitions {
   /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
     * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.
     */
-  private[consensus] def viewChangeLeaderPool(coreFacilitators: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
-    if (coreFacilitators.nonEmpty) coreFacilitators else facilitators
+  private[consensus] def viewChangeLeaderPool(committeeMembers: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
+    if (committeeMembers.nonEmpty) committeeMembers else facilitators
 
   private[consensus] def readyPromotionQuorum(peerCountIncludingSelf: Int, quorumThresholdFraction: Double): Int =
     math.max(2, math.max(1, QuorumPolicy.fromFraction(peerCountIncludingSelf, quorumThresholdFraction)))

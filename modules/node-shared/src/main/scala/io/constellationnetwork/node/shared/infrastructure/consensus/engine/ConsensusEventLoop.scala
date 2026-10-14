@@ -290,13 +290,14 @@ object ConsensusEventLoop {
     // auditor's deterministic target when authorizing a paired atomic admission vote.
     parentRoundCommitteeOf: Outcome => Set[PeerId],
     openAdmissionCadenceOf: Key => Boolean,
+    // Round index (snapshot ordinal) for the round-robin LeaderSchedule.
+    roundIndexOf: Key => Long,
     // Optional local proof view for the exact next-seat finality-headroom gate. Global L0 supplies parent snapshot proof signers.
     locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
     // Monotonic certified-lineage fact. False only for the exact canonical from-genesis
     // singleton before its first 1 -> 2 expansion.
     expandedBeyondSingletonOf: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
-    peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission Ready-only while allowing carried probation peers to
@@ -364,8 +365,8 @@ object ConsensusEventLoop {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        peerQualityOf,
         _key.get _,
+        roundIndexOf,
         lastOutcomeEndTimeMsOf,
         onOutcomeFinalized.getOrElse((_: Outcome) => Async[F].unit),
         onOutcomeInitialized.getOrElse((_: Outcome) => Async[F].unit),

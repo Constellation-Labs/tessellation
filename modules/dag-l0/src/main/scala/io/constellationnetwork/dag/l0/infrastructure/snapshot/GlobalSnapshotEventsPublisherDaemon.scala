@@ -13,7 +13,7 @@ import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollatera
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.Daemon
-import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.{BootstrapCommittee, QuorumPolicy}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -117,15 +117,14 @@ object GlobalSnapshotEventsPublisherDaemon {
     * This value is local pacing evidence only. It must never enter proposal validation, membership derivation, snapshot bytes, or a state
     * proof because valid artifact proof subsets can differ between nodes.
     *
-    * Event-driven production resumes only after the number of actual participants reaches the existing bootstrap-completion threshold (with
-    * an absolute minimum of two). This gives downloading peers TimeTrigger-paced catch-up through the same configured numeric threshold
-    * operators already choose for the expected steady-state committee, without adding another knob or changing that config value.
+    * Event-driven production resumes only after the number of actual participants reaches the bootstrap committee size
+    * (`BootstrapCommittee.MinimumSize`). This gives downloading peers TimeTrigger-paced catch-up without adding another knob.
     */
   private[dag] def participatingFacilitatorCount(facilitators: Set[PeerId], proofSigners: Set[PeerId]): Int =
     facilitators.intersect(proofSigners).size
 
-  private[dag] def minimumEventTriggerParticipants(bootstrapCompleteProofsThreshold: Int): Int =
-    math.max(AbsoluteMinimumEventTriggerParticipants, bootstrapCompleteProofsThreshold)
+  private[dag] val minimumEventTriggerParticipants: Int =
+    math.max(AbsoluteMinimumEventTriggerParticipants, BootstrapCommittee.MinimumSize)
 
   private[dag] def hasSufficientEventTriggerParticipation(
     participatingFacilitatorCount: Int,
@@ -150,7 +149,7 @@ object GlobalSnapshotEventsPublisherDaemon {
   ): Daemon[F] = {
     val eventTriggerThreshold = consensusConfig.eventTriggerThreshold
     val eventTriggerCooldown = consensusConfig.eventTriggerCooldown
-    val requiredParticipants = minimumEventTriggerParticipants(consensusConfig.bootstrapCompleteProofsThreshold)
+    val requiredParticipants = minimumEventTriggerParticipants
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotEventsPublisherDaemon.getClass)
 
     val events: Stream[F, GlobalSnapshotEvent] = Stream

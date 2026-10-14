@@ -1,9 +1,11 @@
 # Tessellation Consensus Process
 
 This document provides an in-depth walkthrough of the **Global L0** consensus mechanism.
-Unless a section explicitly says otherwise, its command FSM, Core/Tier-1/Witness committees,
-leaders, views, certificates, eviction/admission votes, and v35 behavior do not apply to
-Currency L0.
+Unless a section explicitly says otherwise, its command FSM, single frozen voting set,
+round-robin leaders, views, certificates, eviction/admission votes, and v35 behavior do not
+apply to Currency L0. The committee model is decided in
+[ADR-0036](../adr/0036-single-frozen-voting-set.md): one voting set per round, one quorum,
+no Core/Tier-1/Witness split.
 
 Currency L0 deliberately uses a separate flat, fully synchronous protocol for its small
 permissioned metagraph cohort. See
@@ -412,39 +414,28 @@ final case class GlobalConsensusOutcome(
   finished: Finished,                                  // signedMajorityArtifact +
                                                        // context + majorityTrigger
   removalPenalties: SortedMap[PeerId, Int],            // Multi-round eviction penalty
-  deferralCountdown: SortedMap[PeerId, Int],           // First-time-joiner probation
-  peerQuality: SortedMap[PeerId, (Int, Int)],          // (completed, participated)
   cumulativeMissCounts: SortedMap[PeerId, Long],       // Repeat-offender exponent
-  recentProofSizes: SortedMap[SnapshotOrdinal, Int],   // Bootstrap-classification window
+  recentCommitteeSizes:                                // Canonical committee size per round
+    SortedMap[SnapshotOrdinal, Int],                   // (10-ordinal window); bootstrap signal
   readmissionCountdown: SortedMap[PeerId, Int],        // B2 sticky probation
-  peerSelfHealth: SortedMap[PeerId, SelfHealthHint],   // Last-known self-health hint per
-                                                       // peer; demotes leaders next round
-  peerViewChanges: SortedMap[PeerId, Long],            // View-changes caused as failed
-                                                       // leader-of-the-view
-  recentSigners:                                       // Rolling K-round signer-set window;
-    SortedMap[SnapshotOrdinal, SortedSet[PeerId]],     // input to tier-demotion + leader
-                                                       // recent-signer gate
-  peerTiers: SortedMap[PeerId, Int],                   // Core/Tier1/Witness carry-forward
-                                                       // that drives CommitteeBuilder
-  activeAdmissionScores: SortedMap[PeerId, Int],       // Bounded integral controller score
   lastTimeoutCertificateVoters: SortedSet[PeerId],     // Voters from the accepted proposal's
                                                        // TimeoutCertificate
   recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long], // (ordinal -> consensusEndTime);
                                                        // the view-from-time anchor window
-  controllerEvidence:                                  // Bounded per-round evidence window
-    Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
   penaltyUntil:                                        // Cert-anchored absolute penalty
-    Option[SortedMap[PeerId, SnapshotOrdinal]]         // horizon per peer
+    Option[SortedMap[PeerId, SnapshotOrdinal]],        // horizon per peer
+  expandedBeyondSingleton: Option[Boolean]             // Certified-from-genesis lineage has
+                                                       // grown past one member
 )
 ```
 
-(See `dag-l0/.../snapshot/schema.scala:109-233` for the canonical field list and per-field semantics.)
+(See `GlobalConsensusOutcome` in `dag-l0/.../snapshot/schema.scala` for the canonical field list and per-field semantics.)
 
 `readmissionCountdown` is the B2 probation map: a peer's `removalPenalty` expiry seeds an entry at `readmissionProbationRounds`, and from then on the only path out is a quorum-certified `AdmissionCertificate` accepted on a proposal. See [§11](#11-stall-detection--eviction).
 
-`peerTiers` and `recentSigners` are the inputs that drive the next round's committee and leader selection: `CommitteeBuilder` reads `peerTiers` (carried-forward Core/Tier1/Witness classification) and `LeaderEligibility` reads `recentSigners` (see [§9](#9-facilitator-selection) and [§10](#10-leader-election--view-changes)). `recentRoundEndTimes` is the view-from-time anchor consumed by the next round's pacemaker hint.
+The next round's committee does not come from any per-peer score in the outcome. It comes from the certified `nextRoundAuthority` in the outcome's `finished.certifiedOutcome` (see [§9](#9-facilitator-selection)). `recentCommitteeSizes` records the canonical committee size of each recent round (round-start committee minus certified evictions); the chain is in bootstrap while no entry reaches `BootstrapCommittee.MinimumSize` (3). `recentRoundEndTimes` is the view-from-time anchor consumed by the next round's pacemaker hint.
 
-`GlobalConsensusOutcome` is also packed onto the signed incremental snapshot as a `ConsensusOperationalState` (`schema.scala:234-316`, `toOperationalState`): the deterministic chain-derived fields (`recentProofSizes`, `recentSigners`, `controllerEvidence`, `penaltyUntil`) ride the proposal-critical bytes, and the locally-divergent per-peer fields ride the wider sidecar. This is what lets the committee/leader/penalty history survive a cluster cold-restart instead of resetting to genesis.
+`GlobalConsensusOutcome` is also packed onto the signed incremental snapshot as a `ConsensusOperationalState` (`toOperationalState` / `signedArtifactPeerHistory`): the deterministic chain-derived fields (`recentCommitteeSizes`, `penaltyUntil`) ride the signed `peerHistory`, and the per-peer bookkeeping (`removalPenalty`, `cumulativeMissCount`, `readmissionCountdown`) rides the node-local sidecar. This is what lets the penalty and bootstrap history survive a cluster cold-restart instead of resetting to genesis.
 
 ### What is a Key?
 
@@ -520,7 +511,7 @@ CollectingSignatures
 | CollectingSignatures | Quorum of valid `MajoritySignature`s | Everyone |
 | Finished | Outcome persisted with deduplicated proofs | - |
 
-> **Note (multi-committee quorum):** The advancer transitions when `max(1, QuorumPolicy.fromFraction(N, config.quorumThresholdFraction))` matching declarations are present, where **`N = state.coreFacilitators.value.size`** (the **Core** committee, not the flat round-start set) (`QuorumPolicy.scala`, `state/ConsensusState.scala:207`). `QuorumPolicy.fromFraction` is pure **integer** arithmetic: it dispatches `1.0 -> unanimity(N) = N` and `0.6666...(2/3) -> supermajority(N) = (2*N + 2) / 3` (verified in `QuorumPolicySuite` to equal the legacy `ceil(N * fraction)` for every operated cluster size); any other fraction is rejected at config load. Tier-1 and Witness peers do **not** count toward the cert/phase quorum denominator, so a silent Tier-1 peer cannot wedge a round (see [section 9](#9-facilitator-selection)). Default `quorumThresholdFraction = 1.0` (unanimity); testnet operates at supermajority. The former v33 `QuorumDenominatorShrink` rung that could lower this denominator at a wedged key was removed with the pre-v35 Global L0 engine (ADR-0035 / #1627); on Global L0 the commit gate is `FinalityQuorum.required`, which applies the frozen-committee floor in every round including bootstrap (`clusterFloorActive = true`, see [section 15](#15-signature-threshold)). Snapshot finalization itself is gated by the `SignatureGraceDecision` grace machine (see [section 15](#15-signature-threshold)) so late-but-honest signatures still land in the proofs set. Liveness is provided by `StallDetector` view-changing (VCC + TimeoutCertificate) or vote-evicting unresponsive peers when safe (see [section 10](#10-leader-election--view-changes) and [section 11](#11-stall-detection--eviction)).
+> **Note (one quorum):** Every phase gate, prepare/commit QC, VCC, TimeoutCertificate, eviction/admission certificate and the finalization gate use the same quorum, `FinalityQuorum.of(n, quorumThresholdFraction) = max(1, QuorumPolicy.fromFraction(n, quorumThresholdFraction))`, where **`n = state.roundStartFacilitators.value.size`**, the voting set frozen at round start (`state/FinalityQuorum.scala`, `ConsensusStateAdvancer.committeeQuorum`). `QuorumPolicy.fromFraction` is pure **integer** arithmetic: it dispatches `1.0 -> unanimity(n) = n` and `0.6666...(2/3) -> supermajority(n) = (2*n + 2) / 3` (equal to `ceil(n * fraction)` for every operated cluster size, see `QuorumPolicySuite`); any other fraction is rejected at config load. The compiled default is `quorumThresholdFraction = 1.0` (unanimity); the shipped `dag-l0.conf` sets supermajority. Every seated member counts toward the denominator. There is no Core/Tier-1/Witness split and no quorum shrink: if more than `f` members are silent, the round halts and waits instead of lowering the denominator ([ADR-0036](../adr/0036-single-frozen-voting-set.md)). Snapshot finalization is additionally gated by the `SignatureGraceDecision` grace machine (see [§15](#15-signature-threshold)) so late-but-honest signatures still land in the proofs set. Liveness is provided by `StallDetector` view-changing (VCC + TimeoutCertificate) or vote-evicting unresponsive peers when safe (see [§10](#10-leader-election--view-changes) and [§11](#11-stall-detection--eviction)).
 
 ---
 
@@ -540,13 +531,14 @@ Sent at the start of a round. Contains:
 - `consensusConfigHash: Option[Hash]` - peer compatibility fingerprint from the exact effective
   `deterministicConfigHash`; L0 joining requires exact equality (including presence), and Facility
   processing also logs/metrics mismatches
-- `selfHealthHint: Option[SelfHealthHint]` - the peer's own current self-health (from
-  `LocalHealthMonitor`); the leader aggregates these into `Proposal.observedSelfHealth`
-  so the next round's leader selection can demote unhealthy peers (see
-  [self-health-throttle.md](self-health-throttle.md))
 - `proposerClockMs: Option[Long]` - per-facilitator wall clock at signing time; the
   median across the accepted Facility set becomes the outcome's `consensusEndTime`,
   the view-from-time anchor (see [view-from-time-anchor.md](view-from-time-anchor.md))
+- `triggerStatement: Option[Signed[TriggerStatement]]` - v35 inner-signed trigger evidence
+  that lets the leader's proposal carry the exact Facility triggers it crossed with
+
+A Facility carries no health or participation report. Self-health (`LocalHealthMonitor`)
+is an operator gauge only (`dag_node_self_health`) and has no consensus effect.
 
 ### Proposal
 
@@ -567,15 +559,18 @@ case class Proposal(
                                                   // evictions applied at proposal acceptance
   admissionCertificates: List[AdmissionCertificate] = List.empty, // B2 quorum-certified
                                                   // re-admissions
-  observedResponders: List[PeerId] = List.empty,  // Leader's positive participation
-                                                  // observation; replaces (not unions)
-                                                  // state.observedResponders on accept
-  observedSelfHealth:                             // Leader's canonical view of each
-    SortedMap[PeerId, SelfHealthHint] = SortedMap.empty // responder's SelfHealthHint,
-                                                  // aggregated from this round's Facilities;
-                                                  // becomes outcome.peerSelfHealth on accept
+  admissionNominee: Option[PeerId] = None,        // One open-admission nominee for the
+                                                  // next round (DeterministicRotation)
+  triggerEvidence:                                // v35 leader-selected, follower-verified
+    Option[List[Signed[TriggerStatement]]] = None,// Facility trigger evidence
+  proposalValue: Option[ProposalValue] = None     // v35 view-independent value certified
+                                                  // by the frozen round committee
 )
 ```
+
+The proposal carries no leader-reported participation or health. Nothing the leader
+observes about who responded can change who votes, who leads, the quorum size, or who is
+paid ([ADR-0036](../adr/0036-single-frozen-voting-set.md)).
 
 ### MajoritySignature
 
@@ -629,8 +624,8 @@ Symmetric positive-evidence: eligible voters sign `AdmissionVote(target, reason,
 
 There are two deliberately different evidence lanes:
 
-- **Open expansion:** the parent Proposal carries one canonical nominee chosen by deterministic rendezvous rank. On the five-round admission cadence, each Core voter first waits for that Ready nominee's authenticated Facility declaration bound to the same current round, then directly fetches its authenticated snapshot metadata even if cached gossip says it is nearby. The response must name the exact parent ordinal and hash. Failure, mismatch, or absence means abstain; a late Facility can still trigger the one-shot probe later in the round, and the voter never walks to a second candidate. Parent entropy changes the ranking, but rendezvous has no no-repeat guarantee.
-- **Penalty/probation recovery:** a carried probation peer cannot emit a Facility until its certificate clears probation. This lane therefore probes one deterministic target through the authenticated chain-tip endpoint and requires the configured streak of fresh exact-parent observations. It remains cadence-independent and uses its wider recovery witness pool.
+- **Open expansion:** the parent Proposal carries one canonical nominee chosen by `AdmissionNomineeSelector`, which rotates through the PeerId-sorted candidates by admission-opportunity index (`DeterministicRotation.nominationIndex`), so every eligible candidate is nominated within `|candidates|` opportunities and no snapshot hash can bias the choice. On the five-round admission cadence, each committee member first waits for that Ready nominee's authenticated Facility declaration bound to the same current round, then directly fetches its authenticated snapshot metadata even if cached gossip says it is nearby. The response must name the exact parent ordinal and hash. Failure, mismatch, or absence means abstain; a late Facility can still trigger the one-shot probe later in the round, and the voter never walks to a second candidate.
+- **Penalty/probation recovery:** a carried probation peer cannot emit a Facility until its certificate clears probation. This lane therefore probes one deterministic target through the authenticated chain-tip endpoint and requires the configured streak of fresh exact-parent observations. It remains cadence-independent. Both lanes are voted by the same frozen committee (`AdmissionVoterPool.select` = `roundStartFacilitators - target`).
 
 Currency L0 does not use this certified-admission pipeline. Registrations are carried in
 the complete synchronous Facility union and bounded by incumbent ACK headroom plus the
@@ -786,84 +781,89 @@ private def scheduleTimeTrigger: F[Unit] =
 
 ## 9. Facilitator Selection
 
-> **Superseded pipeline note:** The pre-launch consensus rewrite (the "v19"
-> multi-committee derivation) replaced the flat "previous-eligible + candidates →
-> filters → rendezvous subset" pipeline that [ADR-0006](../adr/0006-selecting-facilitators.md)
-> describes. The chronic-non-signer / prior-round-missing / tightening-window /
-> candidate-deferral filters were **retired** and replaced by the three-tier
-> `CommitteeBuilder` partition documented here. The full as-shipped reference is
-> [committee-tiers.md](committee-tiers.md); ADR-0006 is kept for historical context only.
-> Sources: `CommitteeBuilder.scala`, `GlobalSnapshotConsensusStateCreator.scala`.
+> **Model note:** Global L0 uses one frozen voting set per round
+> ([ADR-0036](../adr/0036-single-frozen-voting-set.md)). The earlier flat
+> "previous-eligible + candidates -> filters -> rendezvous subset" pipeline
+> ([ADR-0006](../adr/0006-selecting-facilitators.md)) and the later three-tier
+> Core/Tier-1/Witness partition ([ADR-0019](../adr/0019-tiered-committee-and-participation-evidence.md),
+> retired doc [committee-tiers.md](committee-tiers.md)) are both gone. Sources:
+> `CertifiedNextRoundProjector.scala`, `CertifiedRoundCommitteeProjector.scala`,
+> `GlobalSnapshotConsensusStateCreator.scala`.
 
-Each round's facilitators are produced in two stages: a thin **candidate filter** in the StateCreator, then a deterministic **three-tier partition** in `CommitteeBuilder`.
+Each round's voting set is `roundStartFacilitators`, frozen when the round is created and
+never mutated. Every seated member votes, signs, can lead, and counts toward the one
+quorum (see [§5](#5-consensus-round-phases)).
 
-### Stage 1 -- Candidate set
+### Successor rule
 
-The StateCreator gates the candidate set by only **two** behavioural filters now: active **removal penalties** and **re-admission probation** (`readmissionCountdown`). Everything the old pipeline did with chronic-non-signer / prior-round-missing / tightening-window / candidate-deferral filtering is now handled inside the tier partition. `selfId` is still NOT unconditionally added (per-node self-add diverges `facilitatorsHash` and causes fork eviction); nodes join via candidate registration, and the genesis empty set falls back to `List(selfId)`.
+The committee for round `N+1` is decided and certified inside round `N`:
 
-### Stage 2 -- Three-tier `CommitteeBuilder` partition
+```
+next = (B \ (D u E)) u A
+```
 
-`CommitteeBuilder.build` partitions the candidate set into **Core (Tier 2)**, **Tier 1**, and **Witness (Tier 0)** from consensus-agreed inputs only -- the carried-forward `lastOutcome.peerTiers`, `lastOutcome.peerQuality` (`(completed, participated)`), and evidence-derived chronic/score inputs -- so every honest node derives a byte-identical partition.
+- `B` - round `N`'s frozen committee (`roundStartFacilitators`).
+- `E` - peers removed by quorum-certified `EvictionCertificate`s accepted in round `N`.
+  Global L0 runs the `RetainSigningLeases` membership policy, so an eviction is accepted only
+  as half of an atomic replacement: one silent-seat eviction paired with one ReadyAtTip
+  admission in the same certified value. `E` therefore never shrinks the committee on its own.
+- `A` - peers added by quorum-certified `AdmissionCertificate`s accepted in round `N`.
+- `D` - deterministic exits: incumbents no longer on the configured seedlist or no longer
+  collateral-eligible in the rebuilt next context.
 
-| Tier | Role | In cert quorum? | Signs + earns? | Leader-eligible? |
-|------|------|:---------------:|:--------------:|:----------------:|
-| **Core** (Tier 2) | Full facilitators; the liveness quorum denominator | Yes | Yes | Yes |
-| **Tier 1** | Witness-eligible; signs the snapshot and witnesses certs | No | Yes | No |
-| **Witness** (Tier 0) | Observation only | No | No | No |
+`CertifiedNextRoundProjector.project` computes this once, before the value is certified,
+and the result is carried as `nextRoundAuthority` in the certified `ProposalValue`. The
+next round's state creator reads it back from the parent's `finished.certifiedOutcome`
+(`CertifiedRoundCommitteeProjector.fromCertifiedAuthority`), so every honest node starts
+round `N+1` with the same set. Incumbents are never truncated by hash order. The selector
+cap (`max-facilitator-count`) only rejects a transition that would grow the set past
+`max(cap, |B|)`, and `CertifiedNextRoundProjector.admissionCapacity` limits how many
+admissions a proposal may carry so one-for-one replacements always fit. A certified
+admission of a peer that is not next-round eligible, or an empty successor, is invalid.
 
-**Tier assignment rule** (re-derived every round, in order): (1) **quality-degradation override** -- a peer whose cumulative `completed/participated` ratio has dropped below `minRatio` (with `participated >= minObservations`) is forced to Tier 1 regardless of its prior tier, so a degraded peer can never gate the liveness quorum; (2) **carried-forward** `priorTiers.get(pid)`; (3) **quality-proven bootstrap** -- a new peer (absent from `priorTiers`) enters Core only if `peerQuality` already proves it above the ratio bar; (4) **default Tier 1** -- unproven new peers join the witness-eligible pool, not the quorum (the replacement for the old "everyone defaults to Core" bootstrap that let unclassified peers wedge the cluster).
+When there is no certified parent (genesis, or the uncertified recovery-seed root), the
+state creator falls back to the parent's facilitators filtered by seedlist, collateral,
+active removal penalties (`removalPenalties`, `penaltyUntil`) and B2 probation
+(`readmissionCountdown`), sorted by PeerId and capped by `max-facilitator-count`. No hash
+or score enters this path either. `selfId` is still not unconditionally added (per-node
+self-add would diverge `facilitatorsHash`); the genesis empty set falls back to
+`List(selfId)`.
 
-**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`. L0 joining requires exact equality of that effective fingerprint, and Facility processing provides a second diagnostic comparison. The separate `versionHash` independently fences the advertised release string (or `CL_VERSION_HASH`); it is not a jar hash or a substitute for the config fence.
+There is no per-peer quality score, tier, or health input to committee membership. A
+member that goes offline keeps its seat until it leaves through `D`, a certified
+eviction, or a future membership-clearing change (not yet implemented; ADR-0036 notes it
+as a follow-up).
 
-**Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
-
-Delegated rewards use the frozen round-start signing committee, not
-`lastArtifact.proofs`: Core and Tier 1 split the validator pool evenly, with no
-Core-vs-Tier-1 stratification. Classic rewards remain proof/signer based. See
-[Consensus reward recipients](rewards.md) for the two ordinal/epoch gates and the
-IntegrationNet diagnosis. The former `delegated-rewards-full-committee` gate and its
-legacy score filter were deleted (ADR-0035 / #1627): the filter never produced mainnet
-history, so delegated rewards always pay the full frozen committee.
+Delegated rewards use the frozen round-start committee, not `lastArtifact.proofs`:
+`GlobalSnapshotConsensusFunctions.delegatedRewardRecipients` is the sorted
+`roundStartFacilitators`, and every seated member receives an equal share of the validator
+pool. Classic rewards remain proof/signer based. The former `delegated-rewards-full-committee`
+gate and its legacy score filter were deleted (ADR-0035 / #1627). See
+[Consensus reward recipients](rewards.md).
 
 ### Candidate Registration
 
-New nodes join through a multi-round registration pipeline:
+New nodes join through registration followed by a certified admission:
 
 1. Peer enters `Observing` state
 2. Other nodes' `peerRegistrationStream` queries the peer's `/consensus/registration` endpoint
    (with a 3s retry if the first attempt returns `None` -- covers the race between
    entering Observing and `initFromDownload` setting `observationKeyR`)
 3. Registration stored at both `key` and `key.next` in `peerRegistrationsR`
-4. Next round: `getCandidates(key.next)` includes the peer; the leader's `Facility`
-   declaration carries the candidates list
-5. Round completes: outcome's `finished.candidates` includes the peer
-6. Next round: the peer enters the candidate set and is classified by `CommitteeBuilder`.
-   A freshly-registered peer with no proven participation defaults to Tier 1, and is
-   promoted toward Core only as its `peerQuality` accrues
+4. Next round: `getCandidates(key.next)` includes the peer; Facility declarations carry
+   the candidates list
+5. The leader picks one open-admission nominee with `AdmissionNomineeSelector`
+   (PeerId-sorted rotation by admission-opportunity index) and carries it in
+   `Proposal.admissionNominee`; the accepted value lands in `finished.candidates`.
+   Nomination alone is not membership authority.
+6. On the admission cadence (`active-admission-expansion-interval-rounds`), committee
+   members probe the nominee (current-round Facility plus exact-parent metadata) and emit
+   `AdmissionVote`s. A quorum assembles an `AdmissionCertificate`; the proposal that
+   carries it puts the peer in `A`, and it is a full voting member from the next round.
 
-**Timeline:** a registered peer can sign (as Tier 1) within ~2-3 rounds; Core promotion follows demonstrated participation.
-
-### Rendezvous Hashing
-
-The `FacilitatorSelector` uses rendezvous hashing (Highest Random Weight) for deterministic subset selection:
-
-```scala
-// Per-peer score: SHA-256(entropy ++ peerId)
-private def rendezvousScore(peerIdHex: String, entropyHex: String): BigInt = {
-  val md = MessageDigest.getInstance("SHA-256")
-  md.update(hexToBytes(entropyHex))
-  md.update(hexToBytes(peerIdHex))
-  BigInt(1, md.digest())
-}
-
-def select(candidates: List[PeerId], entropy: Hash): List[PeerId] =
-  candidates.sorted(orderByScore(entropy).toOrdering).take(maxCount)
-```
-
-**Properties:**
-- **Deterministic**: All honest nodes compute the same subset
-- **IID uniform distribution**: Each peer's score is independently random
-- **Zero autocorrelation**: Selection in round N is independent of round N-1
+**Timeline:** a nominee can be seated on the next admission opportunity once it answers
+the exact-tip probe; how long that takes depends on the cadence and on how many other
+candidates are ahead of it in the rotation.
 
 ---
 
@@ -871,48 +871,24 @@ def select(candidates: List[PeerId], entropy: Hash): List[PeerId] =
 
 ### Leader Selection
 
-`FacilitatorSelector.selectLeader` uses rendezvous hashing (Highest Random Weight) over the facilitator set:
+`LeaderSchedule.leader` is a deterministic round-robin over the frozen committee:
 
 ```scala
-def selectLeader(facilitators: List[PeerId], entropy: Hash, viewNumber: Int): PeerId = {
-  val sorted = facilitators.sorted(orderByScore(entropy).toOrdering)
-  sorted(viewNumber % sorted.size)
+def leader(committee: Iterable[PeerId], roundIndex: Long, view: Long): PeerId = {
+  val sorted = committee.toVector.distinct.sorted
+  val n = sorted.size.toLong
+  val index = (floorMod(roundIndex, n) + floorMod(view, n)) % n
+  sorted(index.toInt)
 }
 ```
 
-On view change, `viewNumber` increments, producing a different leader without changing the facilitator set.
-
-### Quality-Weighted Leader Selection (`selectLeaderWeighted`)
-
-Leader selection uses consensus-agreed `(completed, participated)` scores from `lastOutcome.peerQuality`. Tier `= participated - completed = failure count`; lower tier wins; rendezvous score breaks ties within a tier. Integer-only arithmetic guarantees cross-platform determinism.
-
-### Recent-Signer Leader Pool (`LeaderEligibility.fromRecentSigners`)
-
-Leader candidates are pre-filtered before `selectLeaderWeighted` by `LeaderEligibility.fromRecentSigners` (`LeaderEligibility.scala`), which applies **two** gates over the **Core** committee (not the full active set):
-
-```scala
-// Gate 1 -- graduated: participated >= minParticipationObservations && completed >= 1
-val graduated = core.filter { pid =>
-  val (completed, participated) = peerQuality.getOrElse(pid, (0, 0))
-  participated >= minParticipationObservations && completed >= 1
-}
-val graduationBase = if (graduated.size >= minLeaderPoolSize) graduated else core
-
-// Gate 2 -- recent-signer: present in EVERY one of the last DemotionConsecutiveMisses
-//          recentSigners windows (only applied once that window is deep enough)
-val recentSets = recentSigners.values.toList.takeRight(DemotionConsecutiveMisses)
-val recentSignerPool =
-  if (recentSets.sizeIs >= DemotionConsecutiveMisses)
-    graduationBase.filter(pid => recentSets.forall(_.contains(pid)))
-  else graduationBase
-val leaderPool =
-  if (recentSignerPool.size >= minLeaderPoolSize) recentSignerPool else graduationBase
-```
-
-- **Gate 1 (graduated)** keeps unproven and never-finalized peers out of the lead slot. The `completed >= 1` clause is the key: a peer can accumulate `participated` from past rounds without ever finalizing one, and such a peer kept being elected and stalling rounds. A single completed round as a non-leader follower restores eligibility.
-- **Gate 2 (recent-signer)** further requires the peer to have signed in *every* one of the last `DemotionConsecutiveMisses` rounds, so a peer that recently went quiet is not handed the lead slot before the tier machinery demotes it.
-
-Both gates carry the `minLeaderPoolSize` fallback: if applying a gate would drop the pool below `minLeaderPoolSize`, it falls back to the broader set (so a small or cold-start cluster still has a meaningful pool, and `viewNumber % size` view rotation stays meaningful). Excluded peers are reported with typed reasons (`NotGraduated` / `NotRecentSigner`). `GlobalSnapshotConsensusStateCreator` reads `leaderEligibility.leaderPool` and applies `selectLeaderWeighted` to it.
+The round index is the snapshot ordinal. The same function is called at round creation
+(`GlobalSnapshotConsensusStateCreator`, view 0), when a VCC is applied and when a
+TimeoutCertificate is applied (`StateTransitions`). On a view change the view increments,
+so the next member in sorted order leads without changing the committee; one full cycle of
+views visits every member once. No snapshot hash, quality score, health hint, or
+leader-reported observation feeds leader choice. An offline member keeps its leader turns;
+each costs one view change.
 
 ### View Change Protocol (two-track view advance)
 
@@ -920,7 +896,7 @@ Both gates carry the `minLeaderPoolSize` fallback: if applying a gate would drop
 
 When `StallDetector` invokes `ViewChangeManager.performViewChange(key, state, timeoutReason)` (`engine/ViewChangeManager.scala:80`), it emits **both** votes and queues **both** assembly checks:
 
-1. Record peer quality for the old leader.
+1. Record the failed leader in the node-local `PeerQualityTracker` (metrics only; no consensus effect).
 2. Set `highestKnownQc = None`: the artifact-only `ProposalQC` pacemaker carry was a pre-v35 authority and was retired with the legacy engine (ADR-0035 / #1627). Certified cross-view safety travels in the verified `CertifiedProposalQC` held by `CertifiedVoteLock`.
 3. **Track 1 (VCC):** delegate to a `ViewChangeVoter` (typically `GossipingViewChangeVoter`) to sign+store+gossip a `ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc)`, then queue `CheckViewChangeAssembly(key)`.
 4. **Track 2 (TC):** delegate to a `TimeoutVoter` (typically `GossipingTimeoutVoter`) to sign+store+gossip a `TimeoutVote(...same fields..., reason)` where `reason` is the `TimeoutReason` (`NoProgress` or `QuorumInfeasible`), then queue `CheckTimeoutCertificateAssembly(key)`.
@@ -931,26 +907,25 @@ The `facilitatorsHash` signed into every vote is the **canonical round-start com
 
 ### VCC Assembly (`StateTransitions.checkViewChangeAssembly`)
 
-`checkViewChangeAssembly(key)` runs whenever a `ViewChangeVote` lands in storage. When `votes.size >= max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))` (quorum over the **Core** committee, see [§9](#9-facilitator-selection)) and all votes agree on a single `facilitatorsHash`, `ViewChangeCertificateBuilder.build` assembles a `ViewChangeCertificate` (de-duplicates by signer, rejects voters not in the committee, sorts deterministically). On success the FSM:
+`checkViewChangeAssembly(key)` runs whenever a `ViewChangeVote` lands in storage. When the votes from members of the frozen committee reach `FinalityQuorum.of(|roundStartFacilitators|, quorumThresholdFraction)` (the one committee quorum, see [§5](#5-consensus-round-phases)) and all votes agree on a single `facilitatorsHash`, `ViewChangeCertificateBuilder.build` assembles a `ViewChangeCertificate` (de-duplicates by signer, rejects voters not in the committee, sorts deterministically). On success the FSM:
 
 1. Stores the assembled VCC via `storage.storeAssembledVcc(key, vcc)` so the new leader's `Proposal` carries it.
-2. Atomically advances `state.viewNumber → toView`, sets `state.leader` to the deterministic new leader, **clears `withdrawnFacilitators`** (a withdrawal is scoped to the `(key, view)` pair it was emitted for), and resets `state.status` to a fresh `CollectingFacilities`.
+2. Atomically advances `state.viewNumber → toView`, sets `state.leader` to `LeaderSchedule.leader(committee, ordinal, toView)`, **clears `withdrawnFacilitators`** (a withdrawal is scoped to the `(key, view)` pair it was emitted for), and resets `state.status` to a fresh `CollectingFacilities`.
 3. Queues `CheckUpdate(key)` so the new view's facility-collection round begins immediately.
 
-Only single-proof votes from members of the frozen Core are counted, against `CertifiedConsensus.requiredCoreQuorum` (`StateTransitions.certificateQuorum`, shared with TC). The wider witness pool no longer applies to VCC/TC.
+Only votes from members of `roundStartFacilitators` count (`StateTransitions` `CertificateQuorum.voterPool`); there is no wider witness pool.
 
 ### TimeoutCertificate Assembly + Apply (`StateTransitions.checkTimeoutCertificateAssembly` / `...Apply`)
 
-The Track-2 counterpart. `checkTimeoutCertificateAssembly(key)` runs whenever a `TimeoutVote` lands in storage; on a frozen-Core quorum of matching `(fromView, toView)` votes it assembles a `TimeoutCertificate` via `TimeoutCertificateBuilder`. When a leader's `Proposal.timeoutCertificate` arrives at a view advance, `checkTimeoutCertificateApply(key, from, to)` re-validates it against the same frozen-Core quorum / hash invariants and applies it (`applyCertifiedTimeoutCertificate`). Neither track lowers the quorum denominator; the v33 `QuorumDenominatorShrink` rung was removed (ADR-0035 / #1627, [quorum-shrink.md](quorum-shrink.md)).
+The Track-2 counterpart. `checkTimeoutCertificateAssembly(key)` runs whenever a `TimeoutVote` lands in storage; on the committee quorum of matching `(fromView, toView)` votes it assembles a `TimeoutCertificate` via `TimeoutCertificateBuilder`. When a leader's `Proposal.timeoutCertificate` arrives at a view advance, `checkTimeoutCertificateApply(key, from, to)` re-validates it against the same quorum / voter-pool / hash invariants and applies it (`applyCertifiedTimeoutCertificate`), selecting the new leader with `LeaderSchedule.leader`. Neither track can lower the quorum denominator; there is no quorum shrink.
 
 Mid-round eviction does NOT happen on either view-change path. If a facilitator is genuinely unreachable, the stall-cycle abandonment path in `StallDetector` handles it (the round is abandoned and retried with the current eligibility set). For consensus-witnessed eviction, see B1 below.
 
-### Self-Health and View-from-Time Inputs
+### View-from-Time Input
 
-Two consensus-agreed inputs feed leader election and the pacemaker, both threaded through the Facility -> Proposal -> outcome path:
+One consensus-agreed input feeds the pacemaker, threaded through the Facility -> Proposal -> outcome path. (The former self-health throttle, which let leader-aggregated health hints demote leaders, was removed by [ADR-0036](../adr/0036-single-frozen-voting-set.md); `LocalHealthMonitor` is now an operator gauge only.)
 
-- **Self-health throttle.** Each peer stamps its own `SelfHealthHint` (from `LocalHealthMonitor`) onto its `Facility.selfHealthHint`. The leader aggregates the responders' hints into `Proposal.observedSelfHealth`, which becomes the next outcome's `peerSelfHealth`. The next round's `selectLeaderWeighted` health-gates the leader pool: Degraded peers are demoted to tier 1, and Critical peers are **hard-excluded** from the primary pool (`FacilitatorSelector.scala:249`), reachable only through the starvation fallback at tier 2 so liveness still holds if every peer reports Critical. Design reference: [self-health-throttle.md](self-health-throttle.md).
-- **View-from-time anchor.** Each peer stamps its wall clock onto `Facility.proposerClockMs`. The median across the accepted Facility set becomes `consensusEndTime` (clamped against `parent.consensusEndTime + 1` for anti-regression), recorded into the outcome's `recentRoundEndTimes`. The next round derives a `timeView` from this anchor (`ViewFromTime.compute`), but **only as a pacemaker timeout hint** that wakes the round to emit a signed view-change vote. Proposal-critical view advance still requires a quorum-certified VCC or TC (`initialView = 0` at round start; see `GlobalSnapshotConsensusStateCreator.scala:668-690`). Design reference: [view-from-time-anchor.md](view-from-time-anchor.md).
+- **View-from-time anchor.** Each peer stamps its wall clock onto `Facility.proposerClockMs`. The median across the accepted Facility set becomes `consensusEndTime` (clamped against `parent.consensusEndTime + 1` for anti-regression), recorded into the outcome's `recentRoundEndTimes`. The next round derives a `timeView` from this anchor (`ViewFromTime.compute`), but **only as a pacemaker timeout hint** that wakes the round to emit a signed view-change vote. Proposal-critical view advance still requires a quorum-certified VCC or TC (`initialView = 0` at round start; see `GlobalSnapshotConsensusStateCreator.scala`). Design reference: [view-from-time-anchor.md](view-from-time-anchor.md).
 
 ### Self-Recovered Leader Cooldown (commit `2026-04-27` codex-followups)
 
@@ -1015,20 +990,20 @@ The first stall timeout warns only — peers get one more cycle. Eviction-vote e
 
 ### Quorum Floor (per-tick infeasibility check)
 
-`StallDetector` derives the feasibility floor from the **Core** committee via the pure helper `computeCoreQuorumStatus` (`StallDetector.scala:1456`), using the same integer `QuorumPolicy.fromFraction` denominator as the advancer:
+`StallDetector` judges feasibility against the frozen round committee, the same denominator the advancer and the certificate builders use:
 
 ```scala
-val activeCore   = state.coreFacilitators.value.toSet -- state.withdrawnFacilitators.value
-val coreRemaining = activeCore.size - activeCore.intersect(missingPeers).size
-val baseRequired  = math.max(1, QuorumPolicy.fromFraction(activeCore.size, config.quorumThresholdFraction))
-val quorumInfeasible = coreRemaining < baseRequired
+val committee        = state.roundStartFacilitators.value.toSet
+val remaining        = committee.size - committee.intersect(missingPeers).size
+val required         = math.max(1, QuorumPolicy.fromFraction(committee.size, config.quorumThresholdFraction))
+val quorumInfeasible = remaining < required
 ```
 
-Computing over `activeCore` (not the flat facilitator set) matters when facilitator subsetting is active: with Core=3, 1 missing, `coreRemaining = 2` — we don't want to flag QUORUM_INFEASIBLE just because cluster-Ready is 5. The check is a **ceiling, not a floor on aggregate evictions**: `selectEvictionTargets` separately caps each round's vote emission at `committee.size - minQuorum` so the certified evictions can never shrink the next-round committee below quorum (commit `3ee1800d3`, "Eviction targets capped").
+`missingPeers` already counts a withdrawn member that has not declared, so a locally observed withdrawal never shrinks the denominator, and there is no shrink override. The check is a **ceiling, not a floor on aggregate evictions**: `selectEvictionTargets` separately caps each round's vote emission at `committee.size - minQuorum` so the certified evictions can never shrink the next-round committee below quorum (commit `3ee1800d3`, "Eviction targets capped").
 
-### Witness Pool Widening (commit `e1bdfb190`, "v9")
+### Certificate Voter Pool
 
-Historically, for both B1 and B2 cert assembly the **witness pool** is `state.eligibleFacilitators.value.toSet - target` rather than `state.facilitators` (the active committee). Quorum is still pegged to committee size. This admits signatures from eligible-but-not-active peers (e.g., chronic-excluded peers that the chronic filter held out of the round), which closes the apr29 wedge at ord 3110065: 3 chronic-excluded peers signed valid eviction votes that the committee gate threw away, leaving 4 of the 7 needed votes. Build-time rejection codes still say `voter_not_in_committee` / `signer_not_in_committee` for log-grep compatibility -- the semantics changed but the log strings did not. On Global L0 today this lane is largely historical: under `RetainSigningLeases` (`allowsCertifiedAtomicReplacement = true`) admission certificates, probation included, and atomic-replacement evictions are Core-attested (`AdmissionVoterPool`, `EvictionVoterPool`), and VCC/TC count only frozen-Core voters (ADR-0035 / #1627).
+For B1 and B2 cert assembly the voter pool is the frozen committee minus the target (`EvictionVoterPool.select` / `AdmissionVoterPool.select`, both `roundStartFacilitators - target`), and the quorum is the one committee quorum. The earlier widening to `eligibleFacilitators - target` (commit `e1bdfb190`, "v9") existed to let tier-excluded peers witness; with no tiers it was removed. Build-time rejection codes still say `voter_not_in_committee` / `signer_not_in_committee`.
 
 ### B2 Sticky Probation (commit `bc8d58d36`, "v12")
 
@@ -1232,8 +1207,7 @@ Recovery can be triggered by three independent paths, all converging on `Waiting
      - If exact hash-addressed bytes exist but their ordinal hardlink is missing, recreate only that hardlink and verify it by reading and
        hashing the result. An occupied ordinal is never overwritten by this repair. If snapshot-info is missing, continue walking and use
        normal validated replay to rebuild the incomplete range.
-     - Enforce any configured seedlist-signed recovery checkpoint: the checkpoint file is verified at startup, downloaded/observed snapshots must pass the checkpoint hash at the checkpoint ordinal, and a local persisted chain whose resolved anchor is already at/above the checkpoint must also prove the checkpoint locally.
-     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, checkpoint, derived context, and state proof
+     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, derived context, and state proof
        before it becomes application state. Replacing an ordinal's local hash/ordinal indexes is uncancelable; recovery may run for hours
        while progressing, but an inactivity watchdog retries it after ten minutes without an ordinal advance.
      - `setForRecovery` bypasses sequential prepend requirement on `SnapshotStorage`
@@ -1409,12 +1383,10 @@ failure, network outage), not forming connected subgroups.
 small enough for connected partitions to form. The default value (20) is safe
 for all current deployment sizes.
 
-**StallDetector interaction:** The quorum floor uses
-`min(clusterQuorum, roundQuorum)` so that subsetting rounds compute quorum
-from the round's facilitator count, not the full cluster size. Without this,
-every round with a missing facilitator would be abandoned as
-QUORUM_INFEASIBLE (e.g., 3 facilitators, 1 missing, remaining=2 <
-clusterQuorum=5).
+**StallDetector interaction:** The quorum floor is computed from the round's
+frozen committee (`roundStartFacilitators`), never from the cluster's Ready
+count, so a round is not abandoned as QUORUM_INFEASIBLE just because the
+cluster is larger than the committee (see [§11](#11-stall-detection--eviction)).
 
 #### Stale Peer Registrations
 
@@ -1436,44 +1408,33 @@ The `quorumImpossible` escalation in `AbandonmentTracker` provides a third -- if
 
 ## 15. Signature Threshold
 
-Finalization is gated by the pure `SignatureGraceDecision.evaluate` state machine
-(`SignatureGraceDecision.scala:58-82`), not a single count check. A round that
-crosses the finalization quorum does **not** commit instantly; it may keep collecting
-`MajoritySignature` declarations for a bounded **grace window** so the finalized proof
-and participation-evidence set is not truncated to whoever happened to sign in the
-first 1-3ms.
-The window length is one of three cases:
+Finalization is gated by the committee quorum plus the pure `SignatureGraceDecision.evaluate`
+state machine (`SignatureGraceDecision.scala`). A round that crosses the finalization quorum
+does **not** always commit instantly; it may keep collecting `MajoritySignature` declarations
+for a bounded **grace window** so the finalized proof set and the certified commit evidence
+are not truncated to whoever happened to sign in the first 1-3ms.
 
-| Case | Condition | Window | Anchored from |
-|------|-----------|--------|---------------|
-| **Full committee signed** | Every committee member has signed | finalize immediately | - |
-| **Core complete, committee not full** | Only Tier-1 (non-quorum) signatures outstanding | short `tier1Window` | when Core **first** completed |
-| **Core incomplete** | A quorum-bearing Core signer is still missing | full `fullWindow` | first quorum |
+| Case | Condition | Behavior |
+|------|-----------|----------|
+| **Below quorum** | fewer valid signatures than `FinalityQuorum.of(n, fraction)` | keep collecting |
+| **Full committee signed** | every member of `roundStartFacilitators` has signed | finalize immediately |
+| **Quorum, committee not full** | otherwise | wait `signatureGracePeriod` (default 3s) from when quorum was first seen, then finalize |
 
-The Core-complete window is anchored from when Core first completed (not from first
-quorum) so a round whose Core completes late still gives prompt Tier-1 signatures a
-chance to land in the artifact and participation evidence. Delegated reward recipients
-are already fixed by round membership.
+Points that matter:
 
-Two distinctions matter:
+- **One quorum.** `buildFinishedTransition` requires `committeeQuorum(state)` =
+  `FinalityQuorum.of(|roundStartFacilitators|, quorumThresholdFraction)`, the same quorum every
+  phase gate and certificate uses. There is no separate Core quorum, no bootstrap-vs-steady
+  finality split, and no shrink.
+- **Cluster-wide window.** `signatureGracePeriod` is in `deterministicConfigHash` because it
+  bounds which commit signatures land in the certified commit evidence (`CommitQC`). Every
+  node in the cluster must run the same value; the L0 join fence rejects a mismatch.
+- **Pure decision.** The caller owns the per-round `Stamp` in a `Ref` and applies the returned
+  `StampUpdate`. Delegated reward recipients are fixed by round membership, not by proofs.
 
-- **The normal liveness denominator is the Core committee**, not the flat facilitator
-  set. Phase transitions and VCC/TC/B1/B2 liveness certificates use
-  `max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))` over Core
-  (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority); nothing lowers it at a
-  wedged key (the quorum-shrink rung was removed by ADR-0035 / #1627). Snapshot
-  finality is stricter: it uses `finalityQuorum` (`FinalityQuorum.required`), counting
-  signatures over the frozen `roundStartFacilitators` committee and clamping the
-  required quorum to the frozen-committee floor. Global L0 applies this floor in every
-  round, including bootstrap (`clusterFloorActive = true`).
-- **Config split.** `tier1SignatureGracePeriod` is the short Tier-1 grace window;
-  `signatureGracePeriod` is the longer Core-incomplete window. The grace machine is the
-  pure decision; the caller owns the per-round `Stamp` in a `Ref` and applies the
-  returned `StampUpdate`.
-
-The Core-quorum requirement still prevents a view-change minority from producing a
-fork snapshot: a minority that followed a view change while the majority continued
-cannot reach the Core quorum and so produces no outcome. See
+The quorum requirement still prevents a view-change minority from producing a fork
+snapshot: a minority that followed a view change while the majority continued cannot
+reach the committee quorum and so produces no outcome. See
 [signature-grace.md](signature-grace.md) for the full state machine.
 
 ---
@@ -1570,8 +1531,8 @@ them to follow consensus without participating as a facilitator.
 | `AdmissionVoter.scala` | Trait + no-op default for emitting an `AdmissionVote` (B2) |
 | `GossipingAdmissionVoter.scala` | Concrete `AdmissionVoter` for the B2 re-admission flow |
 | `ViewChangeCertificateBuilder.scala` | Assembles a `ViewChangeCertificate` for a specific `(fromView, toView)` from collected votes |
-| `EvictionCertificateBuilder.scala` | Assembles an `EvictionCertificate` (same target/reason); witness pool widened to `eligibleFacilitators - target` |
-| `AdmissionCertificateBuilder.scala` | Assembles an `AdmissionCertificate`; symmetric to the eviction builder |
+| `EvictionCertificateBuilder.scala` | Assembles an `EvictionCertificate` (same target/reason); voter pool is `roundStartFacilitators - target` (`EvictionVoterPool`) |
+| `AdmissionCertificateBuilder.scala` | Assembles an `AdmissionCertificate`; symmetric to the eviction builder (`AdmissionVoterPool`) |
 | `CertBuildError.scala` | Typed error ADT returned by the three cert builders |
 
 ### State Layer (`consensus/state/`)
@@ -1598,20 +1559,24 @@ them to follow consensus without participating as a facilitator.
 | `trigger.scala` | Trigger types (TimeTrigger, EventTrigger) |
 | `ConsensusStorage.scala` | Storage for state and declarations |
 | `ConsensusResources.scala` | Resources gathered for a round |
-| `FacilitatorSelector.scala` | Rendezvous hashing for selection/leader |
-| `CommitteeBuilder.scala` | Three-tier (Core/Tier1/Witness) partition, Core floor, chronic-replacement ladder ([committee-tiers.md](committee-tiers.md)) |
-| `TierTransitions.scala` | Tier-demotion hysteresis (Core peer demoted after `DemotionConsecutiveMisses` missed signer sets) |
-| `LeaderEligibility.scala` | Leader-pool gates over Core: graduated + recent-signer |
-| `SignatureGraceDecision.scala` | Pure three-way finalization grace machine ([signature-grace.md](signature-grace.md)) |
-| `state/FinalityQuorum.scala` | Core liveness quorum and ADR-0021 frozen-committee finality floor (`coreQuorum`, `required`) |
-| `state/QuorumPolicy.scala` | Integer Core-quorum derivation `fromFraction(coreSize, quorumThresholdFraction)` (`unanimity` / `(2*n + 2) / 3` supermajority) |
-| `PeerQualityTracker.scala` | Score-based peer assessment |
+| `FacilitatorSelector.scala` | Selector cap (`getMaxCount`, from `max-facilitator-count`); its rendezvous ordering has no remaining consensus caller |
+| `LeaderSchedule.scala` | Round-robin leader: sorted committee index `(ordinal + view) mod n` |
+| `CertifiedNextRoundProjector.scala` | Successor rule `(B \ (D u E)) u A` and admission capacity |
+| `CertifiedRoundCommitteeProjector.scala` | Reads the certified `nextRoundAuthority` back into the next round's committee |
+| `DeterministicRotation.scala` | PeerId-sorted rotation by ordinal for admission nominee, admission-certificate selection, audit and probation targets |
+| `AdmissionNomineeSelector.scala` | Picks the one open-admission nominee carried in a Proposal |
+| `SignatureGraceDecision.scala` | Pure two-way finalization grace machine ([signature-grace.md](signature-grace.md)) |
+| `state/FinalityQuorum.scala` | The one committee quorum `max(1, fromFraction(n, quorumThresholdFraction))` |
+| `state/QuorumPolicy.scala` | Integer quorum arithmetic `fromFraction(n, fraction)` (`unanimity` / `(2*n + 2) / 3` supermajority) |
+| `state/BootstrapCommittee.scala` | Bootstrap signal: no recent `recentCommitteeSizes` entry reached `MinimumSize` (3) |
+| `state/EvictionVoterPool.scala` / `state/AdmissionVoterPool.scala` | Certificate voter pools over the frozen committee |
+| `PeerQualityTracker.scala` | Node-local peer metrics (view changes, abandoned-round misses); no consensus effect |
 
 ### Global Snapshot Specific (`dag-l0/infrastructure/snapshot/`)
 
 | File | Purpose |
 |------|---------|
-| `GlobalSnapshotConsensusStateCreator.scala` | Candidate filter + `CommitteeBuilder` tier partition + `LeaderEligibility` leader pool + view-from-time hint |
+| `GlobalSnapshotConsensusStateCreator.scala` | Reads the certified next-round committee (or the genesis/recovery fallback), `LeaderSchedule` leader, view-from-time hint |
 | `GlobalSnapshotConsensusStateAdvancer.scala` | Phase transitions for global snapshots |
 | `GlobalSnapshotConsensusFunctions.scala` | Artifact creation, validation |
 
@@ -1645,24 +1610,25 @@ them to follow consensus without participating as a facilitator.
 | [0016-consensus-determinism-source-of-truth.md](../adr/0016-consensus-determinism-source-of-truth.md) | Consensus determinism invariant |
 | [0017-leader-based-consensus.md](../adr/0017-leader-based-consensus.md) | Leader-based consensus and selection |
 | [0018-supermajority-quorum-and-between-round-eviction.md](../adr/0018-supermajority-quorum-and-between-round-eviction.md) | Quorum and between-round eviction |
-| [0019-tiered-committee-and-participation-evidence.md](../adr/0019-tiered-committee-and-participation-evidence.md) | Tiered committee and signed evidence |
+| [0019-tiered-committee-and-participation-evidence.md](../adr/0019-tiered-committee-and-participation-evidence.md) | Tiered committee and signed evidence (superseded by ADR-0036) |
 | [0020-two-track-view-change.md](../adr/0020-two-track-view-change.md) | View-change and timeout certificates |
-| [0021-quorum-shrink-and-finality-floor.md](../adr/0021-quorum-shrink-and-finality-floor.md) | Quorum shrink (removed) and finality floor (kept) |
+| [0021-quorum-shrink-and-finality-floor.md](../adr/0021-quorum-shrink-and-finality-floor.md) | Quorum shrink (superseded by ADR-0036) and finality floor |
 | [0022-eviction-and-readmission-certificates.md](../adr/0022-eviction-and-readmission-certificates.md) | Eviction and admission certificates |
 | [0023-recovery-fork-safety-gate.md](../adr/0023-recovery-fork-safety-gate.md) | Recovery fork-safety gate |
 | [0027-operating-invariants.md](../adr/0027-operating-invariants.md) | Cross-cutting operating invariants |
 | [0028-delegated-validator-reward-recipients.md](../adr/0028-delegated-validator-reward-recipients.md) | Delegated validator reward recipients |
 | [0035-v35-to-v41-mainnet-migration.md](../adr/0035-v35-to-v41-mainnet-migration.md) | v3.5 -> v4.1 mainnet migration; removal of the pre-v35 GL0 engine |
+| [0036-single-frozen-voting-set.md](../adr/0036-single-frozen-voting-set.md) | Single frozen voting set and round-robin leaders |
 
 ### Further Reading (current mechanism docs)
 
 | Doc | Topic |
 |-----|-------|
-| [committee-tiers.md](committee-tiers.md) | Three-tier Core / Tier-1 / Witness committee model ([§9](#9-facilitator-selection)) |
 | [rewards.md](rewards.md) | Classic vs delegated reward recipients, activation gates, and IntegrationNet diagnostics |
 | [timeout-certificate.md](timeout-certificate.md) | Track-2 timeout-certificate view advance ([§10](#10-leader-election--view-changes)) |
-| [quorum-shrink.md](quorum-shrink.md) | Removed v33 quorum-denominator shrink rung (stub; ADR-0035) |
 | [signature-grace.md](signature-grace.md) | `SignatureGraceDecision` finalization grace machine ([§15](#15-signature-threshold)) |
+
+Retired mechanism docs (historical only; superseded by ADR-0036): [committee-tiers.md](committee-tiers.md), [quorum-shrink.md](quorum-shrink.md), [liveness-shrink-permissioned-fallback.md](liveness-shrink-permissioned-fallback.md), [eviction-cert-deterministic-shrinkage.md](eviction-cert-deterministic-shrinkage.md), [self-health-throttle.md](self-health-throttle.md).
 
 ---
 
