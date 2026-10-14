@@ -8,6 +8,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
@@ -75,11 +76,16 @@ object SharedValidators {
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction,
       delegatedStaking.maxMetadataFieldsChars,
-      l0Seedlist
+      l0Seedlist,
+      DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _)
     )
     val updateDelegatedStakeValidator = maybeMptStore match {
-      case Some(mptStore) => UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist, mptStore)
-      case None           => UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
+      case Some(mptStore) =>
+        UpdateDelegatedStakeValidator
+          .make[F](signedValidator, l0Seedlist, mptStore, DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _))
+      case None =>
+        UpdateDelegatedStakeValidator
+          .make[F](signedValidator, l0Seedlist, DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _))
     }
     val updateNodeCollateralValidator = maybeMptStore match {
       case Some(mptStore) => UpdateNodeCollateralValidator.make[F](signedValidator, l0Seedlist, mptStore)

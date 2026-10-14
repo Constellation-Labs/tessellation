@@ -2177,9 +2177,10 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury) == 20_00000000L)) // 10%
         .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.aiInference) == 30_00000000L)) // 15%
         .and(expect(result.reservedAddressRewards.size == 3))
-        // validators: 10% split evenly; plus 10% commission on their delegators' share of the 35% gross pool
-        .and(expect(operator(v2NodeAAddress).sorted == List(1_75000000L, 10_00000000L)))
-        .and(expect(operator(v2NodeBAddress).sorted == List(5_25000000L, 10_00000000L)))
+        // validators: 10% split evenly (10 DAG each) plus 10% commission on their delegators' share of the 35% gross
+        // pool (1.75 and 5.25 DAG), paid as one transaction per address
+        .and(expect(operator(v2NodeAAddress) == List(11_75000000L)))
+        .and(expect(operator(v2NodeBAddress) == List(15_25000000L)))
         // delegators: 90% of their node's share of the 35% gross pool, with no flat inflation on top
         .and(expect(delegator(v2NodeAId, address1) == 15_75000000L))
         .and(expect(delegator(v2NodeBId, address2) == 47_25000000L))
@@ -2220,6 +2221,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       val operator = v2Operator(result) _
       val delegator = v2Delegator(result) _
       val staticValidatorReward = e * BigDecimal("0.10") / 3
+      val operatorTotal =
+        (addr: Address, expected: BigDecimal) => operator(addr).size == 1 && operator(addr).forall(a => (BigDecimal(a) - expected).abs <= 2)
 
       expect(emissionAtGate.value.value == v2MainnetEmissionPerEpoch)
         .and(expect(emissionThreeYearsLater.value.value == v2MainnetEmissionPerEpoch))
@@ -2236,19 +2239,11 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
             )
           )
         )
-        // every operator: one static reward plus a 10% commission on its delegators' gross rewards, whatever it configured
-        .and(expect(operator(v2NodeAAddress).size == 2 && operator(v2NodeAAddress).exists(within1(_, staticValidatorReward))))
-        .and(expect(operator(v2NodeAAddress).exists(within1(_, commissionShare * share(11000_00000000L)))))
-        .and(
-          expect(
-            operator(v2NodeBAddress).size == 2 && operator(v2NodeBAddress).exists(within1(_, commissionShare * share(50500_00000000L)))
-          )
-        )
-        .and(
-          expect(
-            operator(v2NodeCAddress).size == 2 && operator(v2NodeCAddress).exists(within1(_, commissionShare * share(25000_00000000L)))
-          )
-        )
+        // every operator: one transaction holding the static reward plus a 10% commission on its delegators' gross
+        // rewards, whatever commission it configured
+        .and(expect(operatorTotal(v2NodeAAddress, staticValidatorReward + commissionShare * share(11000_00000000L))))
+        .and(expect(operatorTotal(v2NodeBAddress, staticValidatorReward + commissionShare * share(50500_00000000L))))
+        .and(expect(operatorTotal(v2NodeCAddress, staticValidatorReward + commissionShare * share(25000_00000000L))))
         // delegators: 31.5% of emission pro rata by stake, accrued rewards counting as stake
         .and(expect(within1(delegator(v2NodeAId, address1), delegatorShare * share(1000_00000000L))))
         .and(expect(within1(delegator(v2NodeAId, address2), delegatorShare * share(10000_00000000L))))

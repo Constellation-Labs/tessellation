@@ -38,6 +38,14 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
   val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
   val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_990_000L) // TODO: set the real activation epoch
+  val minRegistrationBalance: Amount = Amount(1_000_000_00000000L)
+
+  private lazy val defaultConfig = getConfig()
+
+  // The fixed-commission program also switches node registration from seedlist membership to a minRegistrationBalance
+  // balance on the signing address, and lets delegators stake to any registered node.
+  def metanomicsV2Active(environment: AppEnvironment, epoch: EpochProgress): Boolean =
+    defaultConfig.percentDistribution.get(environment).exists(_(epoch).fixedCommission.isDefined)
 
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate

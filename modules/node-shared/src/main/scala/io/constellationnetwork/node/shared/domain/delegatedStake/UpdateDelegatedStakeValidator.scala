@@ -33,7 +33,8 @@ import eu.timepit.refined.internal.Adjacent.integralAdjacent
 trait UpdateDelegatedStakeValidator[F[_]] {
   def validateCreateDelegatedStake(
     signed: Signed[UpdateDelegatedStake.Create],
-    lastContext: GlobalSnapshotInfo
+    lastContext: GlobalSnapshotInfo,
+    epochProgress: EpochProgress
   ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]]
 
   def validateWithdrawDelegatedStake(
@@ -45,20 +46,23 @@ trait UpdateDelegatedStakeValidator[F[_]] {
 object UpdateDelegatedStakeValidator {
   def make[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    metanomicsV2Active: EpochProgress => Boolean
   )(implicit hasher: Hasher[F]): UpdateDelegatedStakeValidator[F] =
-    makeFallback(signedValidator, seedlist)
+    makeFallback(signedValidator, seedlist, metanomicsV2Active)
 
   def make[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
     seedlist: Option[Set[SeedlistEntry]],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    metanomicsV2Active: EpochProgress => Boolean
   )(implicit hasher: Hasher[F]): UpdateDelegatedStakeValidator[F] =
     new UpdateDelegatedStakeValidator[F] {
 
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: GlobalSnapshotInfo
+        lastContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           numberOfSignaturesV <- validateNumberOfSignatures(signed)
@@ -68,7 +72,7 @@ object UpdateDelegatedStakeValidator {
           isSignedExclusivelyBySource <- signedValidator
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
-          authorizedNodeIdV = validateAuthorizedNodeId(signed)
+          authorizedNodeIdV = validateAuthorizedNodeId(signed, epochProgress)
           nodeIdV <- validateNodeId(signed, lastContext)
           parentV <- validateParent(signed)
           tokenLockV <- validateTokenLock(signed)
@@ -135,9 +139,11 @@ object UpdateDelegatedStakeValidator {
           }
 
       private def validateAuthorizedNodeId(
-        signed: Signed[UpdateDelegatedStake.Create]
+        signed: Signed[UpdateDelegatedStake.Create],
+        epochProgress: EpochProgress
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
+        // after the gate any registered node can receive delegations; validateNodeId still requires its node parameters
+        if (metanomicsV2Active(epochProgress) || seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
           signed.validNec
         } else {
           UnauthorizedNode(signed.nodeId).invalidNec
@@ -282,13 +288,15 @@ object UpdateDelegatedStakeValidator {
   // are migrated to MptStore.
   private def makeFallback[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    metanomicsV2Active: EpochProgress => Boolean
   )(implicit hasher: Hasher[F]): UpdateDelegatedStakeValidator[F] =
     new UpdateDelegatedStakeValidator[F] {
 
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: GlobalSnapshotInfo
+        lastContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           numberOfSignaturesV <- validateNumberOfSignatures(signed)
@@ -298,7 +306,7 @@ object UpdateDelegatedStakeValidator {
           isSignedExclusivelyBySource <- signedValidator
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
-          authorizedNodeIdV = validateAuthorizedNodeId(signed)
+          authorizedNodeIdV = validateAuthorizedNodeId(signed, epochProgress)
           nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
@@ -364,9 +372,11 @@ object UpdateDelegatedStakeValidator {
           }
 
       private def validateAuthorizedNodeId(
-        signed: Signed[UpdateDelegatedStake.Create]
+        signed: Signed[UpdateDelegatedStake.Create],
+        epochProgress: EpochProgress
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
+        // after the gate any registered node can receive delegations; validateNodeId still requires its node parameters
+        if (metanomicsV2Active(epochProgress) || seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
           signed.validNec
         } else {
           UnauthorizedNode(signed.nodeId).invalidNec

@@ -196,10 +196,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateNodeParameters]]
-            result <- validator.validate(signed, info)
+            result <- validator.validate(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted node parameters from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

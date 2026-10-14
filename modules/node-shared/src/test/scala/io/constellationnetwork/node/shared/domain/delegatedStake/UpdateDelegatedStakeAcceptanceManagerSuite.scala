@@ -52,7 +52,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager
-        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -101,7 +101,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager
-        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -149,7 +149,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager
-        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -197,7 +197,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
       implicit val (_, h, sp, kp, sourceAddress) = res
       val activation = SnapshotOrdinal.unsafeApply(10L)
       val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
-        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false),
         activation
       )
 
@@ -250,7 +250,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("accepts at most one withdrawal for different stake refs sharing an effective token lock") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
-      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false),
       SnapshotOrdinal.MinValue
     )
 
@@ -313,7 +313,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("rejects a withdrawal whose effective token lock is already pending") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
-      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false),
       SnapshotOrdinal.MinValue
     )
 
@@ -362,7 +362,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     ): UpdateDelegatedStakeValidator[IO] = new UpdateDelegatedStakeValidator[IO] {
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo,
+        epochProgress: io.constellationnetwork.schema.epoch.EpochProgress
       ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         if (signed == invalid) InvalidParent(signed.parent).invalidNec.pure[IO]
         else signed.validNec.pure[IO]
@@ -448,7 +449,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
       validator = new UpdateDelegatedStakeValidator[IO] {
         def validateCreateDelegatedStake(
           signed: Signed[UpdateDelegatedStake.Create],
-          lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+          lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo,
+          epochProgress: io.constellationnetwork.schema.epoch.EpochProgress
         ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] = signed.validNec.pure[IO]
 
         def validateWithdrawDelegatedStake(
@@ -489,7 +491,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     val acceptingValidator = new UpdateDelegatedStakeValidator[IO] {
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo,
+        epochProgress: io.constellationnetwork.schema.epoch.EpochProgress
       ) = signed.validNec.pure[IO]
 
       def validateWithdrawDelegatedStake(
@@ -612,7 +615,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
       io.constellationnetwork.schema.GlobalStateProofSelector(SnapshotOrdinal.MaxValue)
     val validator =
       if (!useMpt)
-        IO.pure(UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+        IO.pure(UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false))
       else
         for {
           producer <- InMemoryMerklePatriciaProducer.make[IO]()

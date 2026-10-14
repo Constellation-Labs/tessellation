@@ -270,7 +270,7 @@ object GlobalSnapshotAcceptanceManager {
           )
 
           nodeParamsResult <- updateNodeParametersAcceptanceManager
-            .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
+            .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, epochProgress)
             .map(acceptanceResult =>
               SortedMap.from(
                 acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed)))

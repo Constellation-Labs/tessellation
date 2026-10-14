@@ -190,7 +190,8 @@ object Mocks {
     val mockUpdateNodeParametersAcceptanceManager = new UpdateNodeParametersAcceptanceManager[IO] {
       def acceptUpdateNodeParameters(
         events: List[Signed[UpdateNodeParameters]],
-        lastSnapshotContext: GlobalSnapshotInfo
+        lastSnapshotContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): IO[UpdateNodeParametersAcceptanceResult] =
         UpdateNodeParametersAcceptanceResult(
           accepted = List.empty,
@@ -198,7 +199,7 @@ object Mocks {
         ).pure[IO]
     }
 
-    val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None)
+    val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false)
     val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
       updateDelegatedStakeValidator,
       fixingDelegatedStakeDoubleWithdrawalOrdinal
