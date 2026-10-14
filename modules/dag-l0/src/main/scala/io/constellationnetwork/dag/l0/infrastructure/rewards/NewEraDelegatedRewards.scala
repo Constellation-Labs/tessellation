@@ -33,17 +33,26 @@ private[rewards] object NewEraDelegatedRewards {
   private val inference = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
 
   private def amount(value: BigInt): Either[DistributionError, Amount] =
-    Either.cond(value >= 0 && value.isValidLong, value.toLong, InvalidAmount(value))
+    Either
+      .cond(value >= 0 && value.isValidLong, value.toLong, InvalidAmount(value))
       .flatMap(v => NonNegLong.from(v).leftMap(_ => InvalidAmount(value)).map(Amount(_)))
 
   private def transactions[F[_]: Async](values: List[(Address, BigInt)]): F[SortedSet[RewardTransaction]] =
-    values.groupMapReduce(_._1)(_._2)(_ + _).toList.filter(_._2 > 0).traverse {
-      case (address, value) =>
-        amount(value).liftTo[F].flatMap { checked =>
-          PosLong.from(checked.value.value).leftMap(_ => InvalidAmount(value)).liftTo[F]
-            .map(v => RewardTransaction(address, TransactionAmount(v)))
-        }
-    }.map(SortedSet.from(_))
+    values
+      .groupMapReduce(_._1)(_._2)(_ + _)
+      .toList
+      .filter(_._2 > 0)
+      .traverse {
+        case (address, value) =>
+          amount(value).liftTo[F].flatMap { checked =>
+            PosLong
+              .from(checked.value.value)
+              .leftMap(_ => InvalidAmount(value))
+              .liftTo[F]
+              .map(v => RewardTransaction(address, TransactionAmount(v)))
+          }
+      }
+      .map(SortedSet.from(_))
 
   private def stakeAmount(record: DelegatedStakeRecord): BigInt =
     BigInt(record.event.value.amount.value.value) + BigInt(record.rewards.value.value)
@@ -64,21 +73,26 @@ private[rewards] object NewEraDelegatedRewards {
     val withdrawn = diffs.acceptedWithdrawals.values.flatten.map(_._1.stakeRef).toSet
     val eligibleFacilitators = facilitators.distinct.filter { case (_, id) => era.validatorsAt(ordinal).contains(id) }
     val parameters = context.updateNodeParameters.toList.flatMap(_.toList).toMap
-    val pools = RewardApportionment.allocate(BigInt(budget.value.value), List(0 -> BigInt(30), 1 -> BigInt(10), 2 -> BigInt(10), 3 -> BigInt(35), 4 -> BigInt(15))).toMap
+    val pools = RewardApportionment
+      .allocate(BigInt(budget.value.value), List(0 -> BigInt(30), 1 -> BigInt(10), 2 -> BigInt(10), 3 -> BigInt(35), 4 -> BigInt(15)))
+      .toMap
     val grossDelegation = pools.getOrElse(3, BigInt(0))
     val commission = grossDelegation / 10
 
     for {
-      _ <- Async[F].raiseError[Unit](AmbiguousFacilitator)
+      _ <- Async[F]
+        .raiseError[Unit](AmbiguousFacilitator)
         .whenA(eligibleFacilitators.groupBy(_._2).exists(_._2.size > 1))
       stakes <- unmodified.toList.flatTraverse {
-        case (address, records) => records.toList.traverseFilter { record =>
-          DelegatedStakeReference.of[F](record.event).map { reference =>
-            Option.unless(withdrawn.contains(reference.hash))((record.event.value.nodeId, address, record))
+        case (address, records) =>
+          records.toList.traverseFilter { record =>
+            DelegatedStakeReference.of[F](record.event).map { reference =>
+              Option.unless(withdrawn.contains(reference.hash))((record.event.value.nodeId, address, record))
+            }
           }
-        }
       }
-      _ <- Async[F].raiseError[Unit](DuplicateStake)
+      _ <- Async[F]
+        .raiseError[Unit](DuplicateStake)
         .whenA(stakes.groupBy { case (node, address, _) => (node, address) }.exists(_._2.size > 1))
       delegationAllocation = RewardApportionment.allocate(
         grossDelegation - commission,
@@ -101,14 +115,18 @@ private[rewards] object NewEraDelegatedRewards {
       facilitatorAddresses = eligibleFacilitators.map { case (address, id) => id -> address }.toMap
       operatorRewards <- transactions[F](
         directAllocation.map { case (id, value) => facilitatorAddresses(id) -> value } ++
-          commissionAllocation.flatMap { case (id, value) => parameters.get(id.toId).map { case (params, _) => params.value.source -> value } } ++
+          commissionAllocation.flatMap {
+            case (id, value) => parameters.get(id.toId).map { case (params, _) => params.value.source -> value }
+          } ++
           oneTimeRewards.map(r => r.address -> BigInt(r.amount.value.value))
       )
-      reservedRewards <- transactions[F](List(
-        protocol -> pools.getOrElse(0, BigInt(0)),
-        treasury -> pools.getOrElse(1, BigInt(0)),
-        inference -> pools.getOrElse(4, BigInt(0))
-      ))
+      reservedRewards <- transactions[F](
+        List(
+          protocol -> pools.getOrElse(0, BigInt(0)),
+          treasury -> pools.getOrElse(1, BigInt(0)),
+          inference -> pools.getOrElse(4, BigInt(0))
+        )
+      )
       updatedCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[F](delegationRewards, diffs, partitioned)
       baselineCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[F](Map.empty, diffs, partitioned)
       creditedRewards = updatedCreates.values.flatten.map(r => BigInt(r.rewards.value.value)).sum -
@@ -123,14 +141,15 @@ private[rewards] object NewEraDelegatedRewards {
         operatorRewards.toList.map(r => BigInt(r.amount.value.value)).sum +
           reservedRewards.toList.map(r => BigInt(r.amount.value.value)).sum + allocatedRewards
       ).liftTo[F]
-    } yield DelegatedRewardsResult(
-      delegationRewards,
-      updatedCreates,
-      updatedWithdrawals,
-      operatorRewards,
-      reservedRewards,
-      withdrawalRewards,
-      totalMinted
-    )
+    } yield
+      DelegatedRewardsResult(
+        delegationRewards,
+        updatedCreates,
+        updatedWithdrawals,
+        operatorRewards,
+        reservedRewards,
+        withdrawalRewards,
+        totalMinted
+      )
   }
 }

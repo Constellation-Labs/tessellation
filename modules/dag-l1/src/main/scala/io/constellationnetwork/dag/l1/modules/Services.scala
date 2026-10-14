@@ -28,9 +28,9 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.modules.SharedServices
-import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
@@ -55,7 +55,8 @@ object Services {
     txHasher: Hasher[F]
   ): Services[F, P, S, SI, R] =
     new Services[F, P, S, SI, R] {
-      private val rewardsEra = DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(cfg.environment, DelegatedRewardsEra.Disabled)
+      private val rewardsEra =
+        DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(cfg.environment, DelegatedRewardsEra.Disabled)
       val localHealthcheck = sharedServices.localHealthcheck
       val block = BlockService.make[F](
         BlockAcceptanceManager.make[F](validators.block, txHasher),
@@ -97,7 +98,9 @@ object Services {
       )
       val collateral = Collateral.makeForGlobalSnapshots[F](
         cfg.collateral,
-        lastGlobalSnapshotStorage.getCombined.map(_.map { case (snapshot, info) => (snapshot.ordinal, info.balances: Map[Address, Balance]) }),
+        lastGlobalSnapshotStorage.getCombined.map(_.map {
+          case (snapshot, info) => (snapshot.ordinal, info.balances: Map[Address, Balance])
+        }),
         rewardsEra
       )
       val restart = sharedServices.restart

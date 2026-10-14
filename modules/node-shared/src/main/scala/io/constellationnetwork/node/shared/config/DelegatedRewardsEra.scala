@@ -22,10 +22,7 @@ final case class DelegatedRewardsEra(
     if (isActive(ordinal)) DelegatedRewardsEra.MinimumNodeCollateral else legacyAmount
 
   def validatorsAt(ordinal: SnapshotOrdinal): SortedSet[PeerId] =
-    rewardValidators.iterator
-      .takeWhile { case (effectiveFrom, _) => effectiveFrom.value.value <= ordinal.value.value }
-      .toList
-      .lastOption
+    rewardValidators.iterator.takeWhile { case (effectiveFrom, _) => effectiveFrom.value.value <= ordinal.value.value }.toList.lastOption
       .fold(SortedSet.empty[PeerId])(_._2)
 }
 

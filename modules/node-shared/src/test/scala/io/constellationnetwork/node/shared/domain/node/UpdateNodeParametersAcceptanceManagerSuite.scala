@@ -47,7 +47,11 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
       signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
       acceptanceManager = mkAcceptanceManager(Set(peerId), DelegatedRewardsEra.Disabled)
-      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(
+        signedInvalidList ++ signedValidList,
+        mkGlobalContext(),
+        SnapshotOrdinal.MinValue
+      )
     } yield
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }

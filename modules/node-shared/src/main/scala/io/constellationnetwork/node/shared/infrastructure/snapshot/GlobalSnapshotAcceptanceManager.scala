@@ -182,7 +182,7 @@ object GlobalSnapshotAcceptanceManager {
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress,
-    rewardsEra: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
+    rewardsEra: DelegatedRewardsEra
   ) = new GlobalSnapshotAcceptanceManager[F] {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 

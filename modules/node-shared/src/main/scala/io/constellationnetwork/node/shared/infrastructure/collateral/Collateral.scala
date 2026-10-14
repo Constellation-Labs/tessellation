@@ -8,8 +8,8 @@ import cats.syntax.order._
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.CollateralConfig
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, LatestBalances}
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
@@ -35,6 +35,7 @@ object Collateral {
         }
     }
 
+  // Fixed policy for currency networks; native DAG must use makeForGlobalSnapshots.
   def make[F[_]: Async: SecurityProvider](
     config: CollateralConfig,
     latestBalances: LatestBalances[F]

@@ -3,8 +3,8 @@ package io.constellationnetwork.dag.l1.domain.collateral
 import java.util.UUID
 
 import cats.data.{NonEmptyList, NonEmptySet}
-import cats.effect.{IO, Ref, Resource}
 import cats.effect.std.Random
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -20,10 +20,10 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, MinMax, TokenLocksConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
-import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.swap.block._
-import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
+import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -75,7 +75,9 @@ object L1CollateralServiceSuite extends MutableIOSuite {
   }
 
   private def observeServices(headOrdinal: Long, operatorBalance: Long, policy: DelegatedRewardsEra)(
-    implicit hasher: Hasher[IO], sp: SecurityProvider[IO], random: Random[IO]
+    implicit hasher: Hasher[IO],
+    sp: SecurityProvider[IO],
+    random: Random[IO]
   ): IO[List[Observation]] =
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -85,61 +87,114 @@ object L1CollateralServiceSuite extends MutableIOSuite {
       observed <- Ref.of[IO, List[Observation]](Nil)
       genesis = GlobalSnapshot.mkGenesis(Map(address -> balance), EpochProgress.MinValue)
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
-      head <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(headOrdinal)), keyPair)
+      head <- Signed
+        .forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(headOrdinal)), keyPair)
         .flatMap(_.toHashed[IO])
       headRef <- SignallingRef.of[IO, Option[(io.constellationnetwork.security.Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](
         Some(head -> GlobalSnapshotInfo.empty.copy(balances = SortedMap(address -> balance)))
       )
       snapshots = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](headRef)
       blocks <- BlockStorage.make[IO]
-      transactions <- TransactionStorage.make[IO](TransactionReference.empty, ContextualTransactionValidator.make(
-        TransactionLimitConfig(Balance.empty, 0.seconds, TransactionFee.zero, 1.second), None))
+      transactions <- TransactionStorage.make[IO](
+        TransactionReference.empty,
+        ContextualTransactionValidator.make(TransactionLimitConfig(Balance.empty, 0.seconds, TransactionFee.zero, 1.second), None)
+      )
       allowSpendBlocks <- AllowSpendBlockStorage.make[IO]
-      allowSpends <- AllowSpendStorage.make[IO](AllowSpendReference.empty,
-        ContextualAllowSpendValidator.make(None, None, AllowSpendsConfig(MinMax(0L, 100L))))
+      allowSpends <- AllowSpendStorage
+        .make[IO](AllowSpendReference.empty, ContextualAllowSpendValidator.make(None, None, AllowSpendsConfig(MinMax(0L, 100L))))
       tokenLockBlocks <- TokenLockBlockStorage.make[IO]
-      tokenLocks <- TokenLockStorage.make[IO](TokenLockReference.empty,
-        ContextualTokenLockValidator.make(None, TokenLocksConfig(0L), None))
-      transaction <- Signed.forAsyncHasher[IO, Transaction](Transaction(address, address, TransactionAmount(1L), TransactionFee.zero,
-        TransactionReference.empty, TransactionSalt(0L)), keyPair)
-      block <- Signed.forAsyncHasher[IO, Block](Block(NonEmptyList.one(BlockReference(Height.MinValue, ProofsHash("parent"))),
-        NonEmptySet.one(transaction)), keyPair)
-      allowSpend <- Signed.forAsyncHasher[IO, AllowSpend](AllowSpend(address, address, None, SwapAmount(1L), AllowSpendFee(0L),
-        AllowSpendReference.empty, EpochProgress(100L), Nil), keyPair)
-      allowSpendBlock <- Signed.forAsyncHasher[IO, AllowSpendBlock](AllowSpendBlock(RoundId(new UUID(0L, 1L)), NonEmptySet.one(allowSpend)), keyPair)
-      tokenLock <- Signed.forAsyncHasher[IO, TokenLock](TokenLock(address, TokenLockAmount(1L), TokenLockFee(0L),
-        TokenLockReference.empty, None, None), keyPair)
-      tokenLockBlock <- Signed.forAsyncHasher[IO, TokenLockBlock](TokenLockBlock(RoundId(new UUID(0L, 2L)), NonEmptySet.one(tokenLock)), keyPair)
+      tokenLocks <- TokenLockStorage.make[IO](TokenLockReference.empty, ContextualTokenLockValidator.make(None, TokenLocksConfig(0L), None))
+      transaction <- Signed.forAsyncHasher[IO, Transaction](
+        Transaction(address, address, TransactionAmount(1L), TransactionFee.zero, TransactionReference.empty, TransactionSalt(0L)),
+        keyPair
+      )
+      block <- Signed.forAsyncHasher[IO, Block](
+        Block(NonEmptyList.one(BlockReference(Height.MinValue, ProofsHash("parent"))), NonEmptySet.one(transaction)),
+        keyPair
+      )
+      allowSpend <- Signed.forAsyncHasher[IO, AllowSpend](
+        AllowSpend(address, address, None, SwapAmount(1L), AllowSpendFee(0L), AllowSpendReference.empty, EpochProgress(100L), Nil),
+        keyPair
+      )
+      allowSpendBlock <- Signed
+        .forAsyncHasher[IO, AllowSpendBlock](AllowSpendBlock(RoundId(new UUID(0L, 1L)), NonEmptySet.one(allowSpend)), keyPair)
+      tokenLock <- Signed.forAsyncHasher[IO, TokenLock](
+        TokenLock(address, TokenLockAmount(1L), TokenLockFee(0L), TokenLockReference.empty, None, None),
+        keyPair
+      )
+      tokenLockBlock <- Signed
+        .forAsyncHasher[IO, TokenLockBlock](TokenLockBlock(RoundId(new UUID(0L, 2L)), NonEmptySet.one(tokenLock)), keyPair)
       blockManager = new BlockAcceptanceManager[IO] {
-        def acceptBlock(block: Signed[Block], context: BlockAcceptanceContext[IO], ordinal: SnapshotOrdinal, shouldValidateCollateral: Boolean)
-          (implicit h: Hasher[IO]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
+        def acceptBlock(
+          block: Signed[Block],
+          context: BlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean
+        )(implicit h: Hasher[IO]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
           context.getBalance(address).flatMap(record(observed, "block", context.getCollateral, _))
-        def acceptBlocksIteratively(blocks: List[Signed[Block]], context: BlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
-          shouldValidateCollateral: Boolean)(implicit h: Hasher[IO]): IO[BlockAcceptanceResult] =
+        def acceptBlocksIteratively(
+          blocks: List[Signed[Block]],
+          context: BlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean
+        )(implicit h: Hasher[IO]): IO[BlockAcceptanceResult] =
           unexpected
       }
       allowSpendManager = new AllowSpendBlockAcceptanceManager[IO] {
-        def acceptBlock(block: Signed[AllowSpendBlock], context: AllowSpendBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
-          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress], creditDestination: Boolean)
-          (implicit h: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
+        def acceptBlock(
+          block: Signed[AllowSpendBlock],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          epoch: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit h: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
           context.getBalance(address).flatMap(record(observed, "allow-spend", context.getCollateral, _))
-        def acceptBlocksIteratively(blocks: List[Signed[AllowSpendBlock]], context: AllowSpendBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
-          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress], creditDestination: Boolean)
-          (implicit h: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] = unexpected
+        def acceptBlocksIteratively(
+          blocks: List[Signed[AllowSpendBlock]],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          epoch: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit h: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] = unexpected
       }
       tokenLockManager = new TokenLockBlockAcceptanceManager[IO] {
-        def acceptBlock(block: Signed[TokenLockBlock], context: TokenLockBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
-          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress])
-          (implicit h: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
+        def acceptBlock(
+          block: Signed[TokenLockBlock],
+          context: TokenLockBlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          epoch: Option[EpochProgress]
+        )(implicit h: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
           context.getBalance(address).flatMap(record(observed, "token-lock", context.getCollateral, _))
-        def acceptBlocksIteratively(blocks: List[Signed[TokenLockBlock]], context: TokenLockBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
-          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress])(implicit h: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] = unexpected
+        def acceptBlocksIteratively(
+          blocks: List[Signed[TokenLockBlock]],
+          context: TokenLockBlockAcceptanceContext[IO],
+          ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          epoch: Option[EpochProgress]
+        )(implicit h: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] = unexpected
       }
       blockService = BlockService.make[IO](blockManager, addresses, blocks, transactions, snapshots, legacy, hasher, policy)
       allowSpendService = AllowSpendBlockService.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-        allowSpendManager, addresses, allowSpendBlocks, allowSpends, legacy, snapshots, policy)
+        allowSpendManager,
+        addresses,
+        allowSpendBlocks,
+        allowSpends,
+        legacy,
+        snapshots,
+        policy
+      )
       tokenLockService = TokenLockBlockService.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-        tokenLockManager, addresses, tokenLockBlocks, tokenLocks, legacy, snapshots, policy)
+        tokenLockManager,
+        addresses,
+        tokenLockBlocks,
+        tokenLocks,
+        legacy,
+        snapshots,
+        policy
+      )
       _ <- expectCapture(blockService.accept(block))
       _ <- expectCapture(allowSpendService.accept(allowSpendBlock, SnapshotOrdinal.unsafeApply(headOrdinal)))
       // The production token-lock caller supplies MinValue; collateral must come from the actual global head.
@@ -153,8 +208,8 @@ object L1CollateralServiceSuite extends MutableIOSuite {
   private def expectCapture(effect: IO[Unit]): IO[Unit] =
     effect.attempt.flatMap {
       case Left(ContextObserved) => IO.unit
-      case Left(error) => IO.raiseError(error)
-      case Right(_) => IO.raiseError(new IllegalStateException("Acceptance unexpectedly bypassed the recording interpreter"))
+      case Left(error)           => IO.raiseError(error)
+      case Right(_)              => IO.raiseError(new IllegalStateException("Acceptance unexpectedly bypassed the recording interpreter"))
     }
 
   private def unexpected[A]: IO[A] = IO.raiseError(new IllegalStateException("Unexpected bulk block acceptance"))

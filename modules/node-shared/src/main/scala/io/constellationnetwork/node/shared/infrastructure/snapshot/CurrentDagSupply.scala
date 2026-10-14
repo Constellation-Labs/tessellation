@@ -18,9 +18,11 @@ object CurrentDagSupply {
     val locks = info.activeTokenLocks.fold(BigInt(0))(_.values.foldLeft(BigInt(0)) { (total, records) =>
       records.foldLeft(total)((sum, record) => sum + record.value.amount.value.value)
     })
-    val allowSpends = info.activeAllowSpends.flatMap(_.get(None)).fold(BigInt(0))(_.values.foldLeft(BigInt(0)) {
-      (total, records) => records.foldLeft(total)((sum, record) => sum + record.value.amount.value.value)
-    })
+    val allowSpends = info.activeAllowSpends
+      .flatMap(_.get(None))
+      .fold(BigInt(0))(_.values.foldLeft(BigInt(0)) { (total, records) =>
+        records.foldLeft(total)((sum, record) => sum + record.value.amount.value.value)
+      })
     val rewards = info.activeDelegatedStakes.fold(BigInt(0))(_.values.foldLeft(BigInt(0)) { (total, records) =>
       records.foldLeft(total)((sum, record) => sum + record.rewards.value.value)
     })

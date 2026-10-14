@@ -243,7 +243,7 @@ object types {
     percentDistribution: Map[AppEnvironment, EpochProgress => ProgramsDistributionConfig],
     oneTimeRewards: Map[AppEnvironment, List[OneTimeReward]],
     priceOracleEpoch: Map[AppEnvironment, EpochProgress],
-    eras: Map[AppEnvironment, DelegatedRewardsEra] = Map.empty
+    eras: Map[AppEnvironment, DelegatedRewardsEra]
   ) extends RewardsConfig
 
   case class TrustStorageConfig(

@@ -33,6 +33,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
+    eras = Map.empty,
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
     emissionConfig = Map(
       AppEnvironment.Dev -> { _: EpochProgress =>

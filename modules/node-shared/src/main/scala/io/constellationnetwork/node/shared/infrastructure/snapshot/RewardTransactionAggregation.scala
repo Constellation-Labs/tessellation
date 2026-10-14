@@ -17,20 +17,30 @@ object RewardTransactionAggregation {
       with NoStackTrace
 
   def combine(rewards: List[RewardTransaction]): Either[RewardOverflow, SortedSet[RewardTransaction]] =
-    rewards.groupMapReduce(_.destination)(r => BigInt(r.amount.value.value))(_ + _).toList.traverse {
-      case (address, value) =>
-        Either.cond(value.isValidLong, value.toLong, RewardOverflow(address, value)).flatMap { long =>
-          PosLong.from(long).leftMap(_ => RewardOverflow(address, value))
-            .map(amount => RewardTransaction(address, TransactionAmount(amount)))
-        }
-    }.map(SortedSet.from(_))
+    rewards
+      .groupMapReduce(_.destination)(r => BigInt(r.amount.value.value))(_ + _)
+      .toList
+      .traverse {
+        case (address, value) =>
+          Either.cond(value.isValidLong, value.toLong, RewardOverflow(address, value)).flatMap { long =>
+            PosLong
+              .from(long)
+              .leftMap(_ => RewardOverflow(address, value))
+              .map(amount => RewardTransaction(address, TransactionAmount(amount)))
+          }
+      }
+      .map(SortedSet.from(_))
 
   def credit(
     balances: SortedMap[Address, Balance],
     rewards: SortedSet[RewardTransaction]
   ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedSet[RewardTransaction])] =
-    rewards.toList.foldLeftM(balances) { (current, reward) =>
-      current.getOrElse(reward.destination, Balance.empty).plus(reward.amount)
-        .map(balance => current.updated(reward.destination, balance))
-    }.map(_ -> rewards)
+    rewards.toList
+      .foldLeftM(balances) { (current, reward) =>
+        current
+          .getOrElse(reward.destination, Balance.empty)
+          .plus(reward.amount)
+          .map(balance => current.updated(reward.destination, balance))
+      }
+      .map(_ -> rewards)
 }

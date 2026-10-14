@@ -56,6 +56,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
   )
 
   def createDelegatedRewardsConfig(asOfEpoch: EpochProgress = EpochProgress(100L)): DelegatedRewardsConfig = DelegatedRewardsConfig(
+    eras = Map.empty,
     flatInflationRate = NonNegFraction.zero,
     emissionConfig = Map(
       AppEnvironment.Dev -> { epochProgress: EpochProgress =>
@@ -75,9 +76,9 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
         )
       }
     ),
-    Map.empty,
-    Map.empty,
-    Map.empty
+    percentDistribution = Map.empty,
+    oneTimeRewards = Map.empty,
+    priceOracleEpoch = Map.empty
   )
 
   def createClassicRewardsResult(amount: Long): DelegatedRewardsResult = {

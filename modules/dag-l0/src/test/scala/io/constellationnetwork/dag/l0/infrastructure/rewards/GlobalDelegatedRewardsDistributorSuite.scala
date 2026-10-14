@@ -83,6 +83,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
   }
 
   val delegatedRewardsConfig = DelegatedRewardsConfig(
+    eras = Map.empty,
     flatInflationRate = NonNegFraction.zero,
     emissionConfig = Map(
       AppEnvironment.Dev -> { epochProgress: EpochProgress =>
@@ -1123,6 +1124,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
       // 2. Set up the test configuration with exact parameters from the table
       val testConfig = DelegatedRewardsConfig(
+        eras = Map.empty,
         // Fixed inflation rate (3%)
         flatInflationRate = NonNegFraction.unsafeFrom(3, 100),
         emissionConfig = Map(

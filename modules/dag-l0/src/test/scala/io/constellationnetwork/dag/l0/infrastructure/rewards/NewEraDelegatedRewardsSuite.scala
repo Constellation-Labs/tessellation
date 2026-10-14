@@ -50,7 +50,11 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
 
   private def stake(address: Address, node: PeerId, value: Long): DelegatedStakeRecord =
     DelegatedStakeRecord(
-      signed(UpdateDelegatedStake.Create(address, node, DelegatedStakeAmount(NonNegLong.unsafeFrom(value)), tokenLockRef = Hash(address.value.value)), node),
+      signed(
+        UpdateDelegatedStake
+          .Create(address, node, DelegatedStakeAmount(NonNegLong.unsafeFrom(value)), tokenLockRef = Hash(address.value.value)),
+        node
+      ),
       SnapshotOrdinal.unsafeApply(1L),
       Balance.empty
     )
@@ -94,33 +98,44 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
     for {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
-      result <- NewEraDelegatedRewards.distribute[IO](info, activation, era, Amount(NonNegLong.unsafeFrom(budget)), signers, diffs, updates, Nil)
+      result <- NewEraDelegatedRewards
+        .distribute[IO](info, activation, era, Amount(NonNegLong.unsafeFrom(budget)), signers, diffs, updates, Nil)
     } yield result
 
   test("all delegations earn fixed net rewards; only eligible signers receive direct rewards and redistributed commission") {
     run().map { result =>
-      expect(result.delegatorRewardsMap(node1)(address1).value.value == 315L, "Active signer delegation receives 90% of its gross share") and
-        expect(result.delegatorRewardsMap(node2)(address2).value.value == 945L, "Offline eligible node delegation still earns") and
-        expect(result.delegatorRewardsMap(excluded)(address3).value.value == 1890L, "Excluded node delegation still earns") and
-        expect(result.nodeOperatorRewards.toList.map(r => r.destination -> r.amount.value.value) == List(address1 -> 1350L), "Direct rewards and the full commission pool aggregate") and
-        expect(result.totalEmittedRewardsAmount.value.value == 10000L, "All five allocations conserve the epoch budget") and
-        expect(result.updatedCreateDelegatedStakes.values.flatten.map(_.rewards.value.value).sum == 3150L, "Recorded balances equal net delegation issuance")
+      expect(result.delegatorRewardsMap(node1)(address1).value.value == 315L, "Active signer delegation receives 90% of its gross share")
+        .and(expect(result.delegatorRewardsMap(node2)(address2).value.value == 945L, "Offline eligible node delegation still earns"))
+        .and(expect(result.delegatorRewardsMap(excluded)(address3).value.value == 1890L, "Excluded node delegation still earns"))
+        .and(
+          expect(
+            result.nodeOperatorRewards.toList.map(r => r.destination -> r.amount.value.value) == List(address1 -> 1350L),
+            "Direct rewards and the full commission pool aggregate"
+          )
+        )
+        .and(expect(result.totalEmittedRewardsAmount.value.value == 10000L, "All five allocations conserve the epoch budget"))
+        .and(
+          expect(
+            result.updatedCreateDelegatedStakes.values.flatten.map(_.rewards.value.value).sum == 3150L,
+            "Recorded balances equal net delegation issuance"
+          )
+        )
     }
   }
 
   test("commission is redistributed proportionally to positive stake among registered eligible signers") {
     run(signers = List(address2 -> node2, address1 -> node1, address3 -> excluded)).map { result =>
       val operators = result.nodeOperatorRewards.map(r => r.destination -> r.amount.value.value).toMap
-      expect(operators(address1) == 588L, "100/400 stake gets 88 commission after canonical tie breaking plus 500 direct") and
-        expect(operators(address2) == 762L, "300/400 stake gets 262 commission plus 500 direct") and
-        expect(result.totalEmittedRewardsAmount.value.value == 10000L, "Commission rounding conserves budget")
+      expect(operators(address1) == 588L, "100/400 stake gets 88 commission after canonical tie breaking plus 500 direct")
+        .and(expect(operators(address2) == 762L, "300/400 stake gets 262 commission plus 500 direct"))
+        .and(expect(result.totalEmittedRewardsAmount.value.value == 10000L, "Commission rounding conserves budget"))
     }
   }
 
   test("missing eligible signers leave direct and commission pools unminted") {
     run(signers = List(address3 -> excluded)).map { result =>
-      expect(result.nodeOperatorRewards.isEmpty, "Excluded signers receive neither reward pool") and
-        expect(result.totalEmittedRewardsAmount.value.value == 8650L, "Only program and net delegation allocations are minted")
+      expect(result.nodeOperatorRewards.isEmpty, "Excluded signers receive neither reward pool")
+        .and(expect(result.totalEmittedRewardsAmount.value.value == 8650L, "Only program and net delegation allocations are minted"))
     }
   }
 
@@ -128,8 +143,8 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
     val info = context.copy(updateNodeParameters = context.updateNodeParameters.map(_ - node2.toId))
     run(info, List(address1 -> node1, address2 -> node2)).map { result =>
       val operators = result.nodeOperatorRewards.map(r => r.destination -> r.amount.value.value).toMap
-      expect(operators(address1) == 850L, "Registered signer receives all commission plus half direct rewards") and
-        expect(operators(address2) == 500L, "Unregistered eligible signer receives only direct rewards")
+      expect(operators(address1) == 850L, "Registered signer receives all commission plus half direct rewards")
+        .and(expect(operators(address2) == 500L, "Unregistered eligible signer receives only direct rewards"))
     }
   }
 
@@ -138,8 +153,8 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       context.copy(activeDelegatedStakes = SortedMap.empty[Address, SortedSet[DelegatedStakeRecord]].some),
       updates = partitioned.copy(unexpiredCreateDelegatedStakes = SortedMap.empty)
     ).map { result =>
-      expect(result.delegatorRewardsMap.isEmpty, "No delegation allocation without positive stake") and
-        expect(result.totalEmittedRewardsAmount.value.value == 6500L, "Programs plus direct validators receive 65 percent")
+      expect(result.delegatorRewardsMap.isEmpty, "No delegation allocation without positive stake")
+        .and(expect(result.totalEmittedRewardsAmount.value.value == 6500L, "Programs plus direct validators receive 65 percent"))
     }
   }
 
@@ -150,35 +165,56 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       reference <- DelegatedStakeReference.of[IO](stakes(address1).head.event)
       withdrawal = signed(UpdateDelegatedStake.Withdraw(address1, reference.hash), node1)
       result <- run(diffs = emptyDiffs.copy(acceptedWithdrawals = SortedMap(address1 -> List(withdrawal -> EpochProgress(1L)))))
-    } yield expect(!result.delegatorRewardsMap.contains(node1), "Withdrawn stake receives no new reward") and
-      expect(!result.updatedCreateDelegatedStakes.contains(address1), "Withdrawal removes the active record") and
-      expect(result.updatedWithdrawDelegatedStakes(address1).head.rewards == Balance.empty, "Withdrawal preserves preexisting accrued balance") and
-      expect(result.totalEmittedRewardsAmount.value.value == 9650L, "Commission is unminted when the only eligible signer no longer has stake")
+    } yield
+      expect(!result.delegatorRewardsMap.contains(node1), "Withdrawn stake receives no new reward")
+        .and(expect(!result.updatedCreateDelegatedStakes.contains(address1), "Withdrawal removes the active record"))
+        .and(
+          expect(
+            result.updatedWithdrawDelegatedStakes(address1).head.rewards == Balance.empty,
+            "Withdrawal preserves preexisting accrued balance"
+          )
+        )
+        .and(
+          expect(
+            result.totalEmittedRewardsAmount.value.value == 9650L,
+            "Commission is unminted when the only eligible signer no longer has stake"
+          )
+        )
   }
 
   test("accepted modifications keep previous rewards but earn no reward in the modification cycle") {
     val original = stakes(address1).head
     val modified = original.event.copy(value = original.event.value.copy(amount = DelegatedStakeAmount(200L)))
     run(diffs = emptyDiffs.copy(acceptedCreates = SortedMap(address1 -> List(modified -> activation)))).map { result =>
-      expect(!result.delegatorRewardsMap.contains(node1), "Modified stake is excluded from this cycle") and
+      expect(!result.delegatorRewardsMap.contains(node1), "Modified stake is excluded from this cycle").and(
         expect(result.updatedCreateDelegatedStakes(address1).head.event.value.amount.value.value == 200L, "Modified record is applied")
+      )
     }
   }
 
   test("malformed duplicate stakes fail closed before balances can be overcredited") {
-    val duplicate = stakes(address1).head.copy(event = signed(stakes(address1).head.event.value.copy(tokenLockRef = Hash("another-lock")), node1))
+    val duplicate =
+      stakes(address1).head.copy(event = signed(stakes(address1).head.event.value.copy(tokenLockRef = Hash("another-lock")), node1))
     val malformed = stakes.updated(address1, stakes(address1) + duplicate)
-    run(context.copy(activeDelegatedStakes = malformed.some), updates = partitioned.copy(unexpiredCreateDelegatedStakes = malformed)).attempt.map {
-      result => expect(result == Left(NewEraDelegatedRewards.DuplicateStake), "Duplicate recipient records must not multiply rewards")
+    run(
+      context.copy(activeDelegatedStakes = malformed.some),
+      updates = partitioned.copy(unexpiredCreateDelegatedStakes = malformed)
+    ).attempt.map { result =>
+      expect(result == Left(NewEraDelegatedRewards.DuplicateStake), "Duplicate recipient records must not multiply rewards")
     }
   }
 
   test("multiple expired withdrawals aggregate by destination and do not count as new issuance") {
-    val first = PendingDelegatedStakeWithdrawal(stakes(address1).head.event, Balance(11L), SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
-    val second = PendingDelegatedStakeWithdrawal(stakes(address2).head.event, Balance(19L), SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
-    run(updates = partitioned.copy(expiredWithdrawalsDelegatedStaking = SortedMap(address1 -> SortedSet(first, second))), budget = 0L).map { result =>
-      expect(result.withdrawalRewardTxs.toList.map(r => r.destination -> r.amount.value.value) == List(address1 -> 30L), "Both withdrawals must reach the wallet") and
-        expect(result.totalEmittedRewardsAmount == Amount.empty, "Paying accrued rewards moves supply without creating it")
+    val first =
+      PendingDelegatedStakeWithdrawal(stakes(address1).head.event, Balance(11L), SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
+    val second =
+      PendingDelegatedStakeWithdrawal(stakes(address2).head.event, Balance(19L), SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
+    run(updates = partitioned.copy(expiredWithdrawalsDelegatedStaking = SortedMap(address1 -> SortedSet(first, second))), budget = 0L).map {
+      result =>
+        expect(
+          result.withdrawalRewardTxs.toList.map(r => r.destination -> r.amount.value.value) == List(address1 -> 30L),
+          "Both withdrawals must reach the wallet"
+        ).and(expect(result.totalEmittedRewardsAmount == Amount.empty, "Paying accrued rewards moves supply without creating it"))
     }
   }
 
@@ -195,15 +231,50 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
-      legacy <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.MinValue)
-      before <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(99L))
+      legacy <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        SnapshotOrdinal.MinValue
+      )
+      before <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        SnapshotOrdinal.unsafeApply(99L)
+      )
       at <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
-      after <- distributor.distribute(context.copy(balances = SortedMap(address1 -> Balance(1000000L))), TimeTrigger, EpochProgress(101L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(101L))
-      event <- distributor.distribute(context, EventTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
-    } yield expect(before == legacy, "A-1 is byte-for-byte the legacy result") and
-      expect(at.totalEmittedRewardsAmount.value.value == 10000L, "A mints 2 percent of finalized current supply at one epoch per year") and
-      expect(after.totalEmittedRewardsAmount.value.value == 20000L, "A+1 refreshes the supply base") and
-      expect(event.totalEmittedRewardsAmount == Amount.empty, "EventTrigger mints no reward budget")
+      after <- distributor.distribute(
+        context.copy(balances = SortedMap(address1 -> Balance(1000000L))),
+        TimeTrigger,
+        EpochProgress(101L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        SnapshotOrdinal.unsafeApply(101L)
+      )
+      event <- distributor.distribute(
+        context,
+        EventTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        activation
+      )
+    } yield
+      expect(before == legacy, "A-1 is byte-for-byte the legacy result")
+        .and(
+          expect(at.totalEmittedRewardsAmount.value.value == 10000L, "A mints 2 percent of finalized current supply at one epoch per year")
+        )
+        .and(expect(after.totalEmittedRewardsAmount.value.value == 20000L, "A+1 refreshes the supply base"))
+        .and(expect(event.totalEmittedRewardsAmount == Amount.empty, "EventTrigger mints no reward budget"))
   }
 
   test("integer apportionment conserves every positive budget and is invariant to input order") {
@@ -211,9 +282,14 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       case (budget, values) =>
         val weights = values.zipWithIndex.map { case (value, index) => index -> BigInt(value) }
         val allocation = RewardApportionment.allocate(BigInt(budget), weights)
-        expect(allocation.map(_._2).sum == BigInt(budget), "Apportionment must conserve its integer budget") and
-          expect(allocation == RewardApportionment.allocate(BigInt(budget), weights.reverse), "Canonical ties must not depend on input order") and
-          expect(allocation.forall(_._2 >= 0), "No recipient may receive a negative amount")
+        expect(allocation.map(_._2).sum == BigInt(budget), "Apportionment must conserve its integer budget")
+          .and(
+            expect(
+              allocation == RewardApportionment.allocate(BigInt(budget), weights.reverse),
+              "Canonical ties must not depend on input order"
+            )
+          )
+          .and(expect(allocation.forall(_._2 >= 0), "No recipient may receive a negative amount"))
     }
   }
 
@@ -226,13 +302,43 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
-      timed <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
-      event <- distributor.distribute(context, EventTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
-      next <- distributor.distribute(context, TimeTrigger, EpochProgress(101L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(101L))
-    } yield expect(timed.totalEmittedRewardsAmount.value.value == 10350L, "One-time issuance is additional to the normal budget") and
-      expect(timed.nodeOperatorRewards.toList.map(_.amount.value.value) == List(1700L), "One-time payout aggregates with the same destination's direct and commission rewards") and
-      expect(event.totalEmittedRewardsAmount == Amount.empty, "Event-triggered snapshots never repeat one-time issuance") and
-      expect(next.totalEmittedRewardsAmount.value.value == 10000L, "The next epoch does not repeat one-time issuance")
+      timed <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        activation
+      )
+      event <- distributor.distribute(
+        context,
+        EventTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        activation
+      )
+      next <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(101L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        SnapshotOrdinal.unsafeApply(101L)
+      )
+    } yield
+      expect(timed.totalEmittedRewardsAmount.value.value == 10350L, "One-time issuance is additional to the normal budget")
+        .and(
+          expect(
+            timed.nodeOperatorRewards.toList.map(_.amount.value.value) == List(1700L),
+            "One-time payout aggregates with the same destination's direct and commission rewards"
+          )
+        )
+        .and(expect(event.totalEmittedRewardsAmount == Amount.empty, "Event-triggered snapshots never repeat one-time issuance"))
+        .and(expect(next.totalEmittedRewardsAmount.value.value == 10000L, "The next epoch does not repeat one-time issuance"))
   }
 
   test("serialized producer rewards reconstruct the same balances and state proof through the shared replay helpers across activation") {
@@ -246,34 +352,65 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
           withdrawalReference <- DelegatedStakeReference.of[IO](stakes(address2).head.event)
           withdrawal = signed(UpdateDelegatedStake.Withdraw(address2, withdrawalReference.hash), node2)
           diffs = emptyDiffs.copy(acceptedWithdrawals = SortedMap(address2 -> List(withdrawal -> EpochProgress(100L))))
-          produced <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), diffs, partitioned, ordinal)
+          produced <- distributor.distribute(
+            context,
+            TimeTrigger,
+            EpochProgress(100L),
+            List(address1 -> node1),
+            diffs,
+            partitioned,
+            ordinal
+          )
           encodedRewards = produced.delegatorRewardsMap.asJson.noSpaces
           recordedRewards <- decode[SortedMap[PeerId, Map[Address, Amount]]](encodedRewards).liftTo[IO]
           replayedCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](recordedRewards, diffs, partitioned)
           replayedWithdrawals <- DelegatedRewardsDistributor.getUpdatedWithdrawalDelegatedStakes[IO](context, diffs, partitioned)
-          producerImmediate <- if (era.isActive(ordinal))
-            RewardTransactionAggregation.combine(produced.nodeOperatorRewards.toList ++ produced.reservedAddressRewards.toList ++ produced.withdrawalRewardTxs.toList).liftTo[IO]
-          else IO.pure(produced.nodeOperatorRewards ++ produced.reservedAddressRewards ++ produced.withdrawalRewardTxs)
-          recordedImmediate <- decode[SortedSet[io.constellationnetwork.schema.transaction.RewardTransaction]](producerImmediate.asJson.noSpaces).liftTo[IO]
-          replayImmediate <- if (era.isActive(ordinal)) RewardTransactionAggregation.combine(recordedImmediate.toList).liftTo[IO]
-          else IO.pure(recordedImmediate)
+          producerImmediate <-
+            if (era.isActive(ordinal))
+              RewardTransactionAggregation
+                .combine(
+                  produced.nodeOperatorRewards.toList ++ produced.reservedAddressRewards.toList ++ produced.withdrawalRewardTxs.toList
+                )
+                .liftTo[IO]
+            else IO.pure(produced.nodeOperatorRewards ++ produced.reservedAddressRewards ++ produced.withdrawalRewardTxs)
+          recordedImmediate <- decode[SortedSet[io.constellationnetwork.schema.transaction.RewardTransaction]](
+            producerImmediate.asJson.noSpaces
+          ).liftTo[IO]
+          replayImmediate <-
+            if (era.isActive(ordinal)) RewardTransactionAggregation.combine(recordedImmediate.toList).liftTo[IO]
+            else IO.pure(recordedImmediate)
           producerBalances <- producerImmediate.toList.foldLeftM(context.balances) { (balances, reward) =>
-            balances.getOrElse(reward.destination, Balance.empty).plus(Amount(NonNegLong.unsafeFrom(reward.amount.value.value))).liftTo[IO]
+            balances
+              .getOrElse(reward.destination, Balance.empty)
+              .plus(Amount(NonNegLong.unsafeFrom(reward.amount.value.value)))
+              .liftTo[IO]
               .map(value => balances.updated(reward.destination, value))
           }
           replayBalances <- replayImmediate.toList.foldLeftM(context.balances) { (balances, reward) =>
-            balances.getOrElse(reward.destination, Balance.empty).plus(Amount(NonNegLong.unsafeFrom(reward.amount.value.value))).liftTo[IO]
+            balances
+              .getOrElse(reward.destination, Balance.empty)
+              .plus(Amount(NonNegLong.unsafeFrom(reward.amount.value.value)))
+              .liftTo[IO]
               .map(value => balances.updated(reward.destination, value))
           }
-          producerInfo = context.copy(balances = producerBalances, activeDelegatedStakes = produced.updatedCreateDelegatedStakes.some, delegatedStakesWithdrawals = produced.updatedWithdrawDelegatedStakes.some)
-          replayInfo = context.copy(balances = replayBalances, activeDelegatedStakes = replayedCreates.some, delegatedStakesWithdrawals = replayedWithdrawals.some)
+          producerInfo = context.copy(
+            balances = producerBalances,
+            activeDelegatedStakes = produced.updatedCreateDelegatedStakes.some,
+            delegatedStakesWithdrawals = produced.updatedWithdrawDelegatedStakes.some
+          )
+          replayInfo = context.copy(
+            balances = replayBalances,
+            activeDelegatedStakes = replayedCreates.some,
+            delegatedStakesWithdrawals = replayedWithdrawals.some
+          )
           producerProof <- producerInfo.stateProof[IO](ordinal)
           replayProof <- replayInfo.stateProof[IO](ordinal)
           producerHash <- hasher.hash(producerInfo)
           replayHash <- hasher.hash(replayInfo)
-        } yield expect(replayInfo == producerInfo, s"Recorded rewards reproduce all balances and withdrawals at $ordinal") and
-          expect(replayProof == producerProof, s"State proof must remain identical at $ordinal") and
-          expect(replayHash == producerHash, s"Reconstructed state encoding must remain identical at $ordinal")
+        } yield
+          expect(replayInfo == producerInfo, s"Recorded rewards reproduce all balances and withdrawals at $ordinal")
+            .and(expect(replayProof == producerProof, s"State proof must remain identical at $ordinal"))
+            .and(expect(replayHash == producerHash, s"Reconstructed state encoding must remain identical at $ordinal"))
       }
     } yield results.reduce(_ and _)
   }

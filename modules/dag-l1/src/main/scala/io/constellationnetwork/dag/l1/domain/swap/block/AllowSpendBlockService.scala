@@ -68,7 +68,13 @@ object AllowSpendBlockService {
           result <- signedBlock.toHashed.flatMap { hashedBlock =>
             EitherT(
               allowSpendBlockAcceptanceManager
-                .acceptBlock(signedBlock, context(collateralOrdinal), snapshotOrdinal, shouldValidateCollateral = true, lastGlobalEpochProgress.some)
+                .acceptBlock(
+                  signedBlock,
+                  context(collateralOrdinal),
+                  snapshotOrdinal,
+                  shouldValidateCollateral = true,
+                  lastGlobalEpochProgress.some
+                )
             )
               .leftSemiflatMap(processAcceptanceError(hashedBlock))
               .semiflatMap(processAcceptanceSuccess(hashedBlock))

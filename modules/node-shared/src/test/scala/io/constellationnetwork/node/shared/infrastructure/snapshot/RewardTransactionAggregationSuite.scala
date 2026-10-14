@@ -33,8 +33,8 @@ object RewardTransactionAggregationSuite extends SimpleIOSuite {
     val transactions = List(reward(operator, 7L), reward(treasury, 50L), reward(operator, 11L), reward(treasury, 3L))
     val expected = Right(SortedSet(reward(operator, 18L), reward(treasury, 53L)))
 
-    expect(RewardTransactionAggregation.combine(transactions) == expected, "each recipient receives its complete entitlement") and
-    expect(RewardTransactionAggregation.combine(transactions.reverse) == expected, "category ordering cannot change payouts")
+    expect(RewardTransactionAggregation.combine(transactions) == expected, "each recipient receives its complete entitlement")
+      .and(expect(RewardTransactionAggregation.combine(transactions.reverse) == expected, "category ordering cannot change payouts"))
   }
 
   pureTest("an empty reward epoch produces no transactions") {
