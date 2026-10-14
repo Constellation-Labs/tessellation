@@ -2341,9 +2341,9 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     } yield {
       val operator = v2Operator(result) _
       expect(operator(v2NodeAAddress) == List(1333333334L))
-        .and(expect(operator(v2NodeBAddress).sorted == List(33333333L, 666666667L)))
+        .and(expect(operator(v2NodeBAddress) == List(7_00000000L))) // 666666667 static + 33333333 commission
         .and(expect(operator(v2NodeCAddress) == List(666666667L)))
-        .and(expect(result.nodeOperatorRewards.size == 4))
+        .and(expect(result.nodeOperatorRewards.size == 3))
         .and(expect(result.nodeOperatorRewards.toList.map(_.amount.value.value).sum == 2700000001L))
         .and(expect(v2Delegator(result)(v2NodeAId, address1) == 60_00000000L))
         .and(expect(v2Delegator(result)(v2NodeBId, address2) == 3_00000000L))
@@ -2386,7 +2386,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     expect(emissionBefore.iInitial != emissionBefore.iTarget)
       .and(expect(emissionAfter.iInitial == DefaultDelegatedRewardsConfigProvider.fixedEmissionRate))
       .and(expect(emissionAfter.iTarget == DefaultDelegatedRewardsConfigProvider.fixedEmissionRate))
-      .and(expect(emissionAfter.copy(iInitial = emissionBefore.iInitial, iTarget = emissionBefore.iTarget) == emissionBefore))
+      .and(expect(emissionAfter.ledgerSupply && !emissionBefore.ledgerSupply))
+      .and(
+        expect(
+          emissionAfter.copy(iInitial = emissionBefore.iInitial, iTarget = emissionBefore.iTarget, ledgerSupply = false) == emissionBefore
+        )
+      )
       .and(expect(programBefore.fixedCommission.isEmpty && programBefore.flatInflationRate.isEmpty))
       .and(expect(programAfter == DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram))
       .and(expect(totalWeight == BigDecimal(1)))
