@@ -32,8 +32,14 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val mintEpoch1: EpochProgress = EpochProgress(NonNegLong.unsafeFrom(2_507_521L + 11_000L)) // approximately 11/6/2025
   val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
+  val stardustTreasury: Address = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
+  val aiInference: Address = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
+  val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
+  val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
+  val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_990_000L) // Placeholder inherited from PR #1632.
+
   def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
-    eras = Map.empty,
+    eras = Map(AppEnvironment.Mainnet -> DelegatedRewardsEra(mainnetMetanomicsV2Epoch, SortedMap.empty)),
     flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
     emissionConfig = Map(
       AppEnvironment.Dev -> { _: EpochProgress =>
@@ -96,12 +102,12 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           epochsPerMonth = NonNegLong(61000L) // 732000 / 12
         )
       },
-      AppEnvironment.Mainnet -> { _: EpochProgress =>
+      AppEnvironment.Mainnet -> { epoch: EpochProgress =>
         EmissionConfigEntry(
           epochsPerYear = PosLong(485502L),
           asOfEpoch = EpochProgress(2311565L),
-          iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
-          iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
+          iTarget = if (epoch < mainnetMetanomicsV2Epoch) NonNegFraction.unsafeFrom(5, 1000) else fixedEmissionRate,
+          iInitial = if (epoch < mainnetMetanomicsV2Epoch) NonNegFraction.unsafeFrom(6, 100) else fixedEmissionRate,
           lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
           iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
           totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
@@ -179,8 +185,21 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
       )
 
-  private val mainnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
-    _ =>
+  val metanomicsV2DistributionProgram: ProgramsDistributionConfig =
+    ProgramsDistributionConfig(
+      weights = Map(
+        protocolWalletMetanomics -> NonNegFraction.unsafeFrom(30, 100),
+        stardustTreasury -> NonNegFraction.unsafeFrom(10, 100),
+        aiInference -> NonNegFraction.unsafeFrom(15, 100)
+      ),
+      validatorsWeight = NonNegFraction.unsafeFrom(10, 100),
+      delegatorsWeight = NonNegFraction.unsafeFrom(35, 100),
+      flatInflationRate = Some(NonNegFraction.zero),
+      fixedCommission = Some(fixedCommission)
+    )
+
+  private val mainnetDistributionProgram: EpochProgress => ProgramsDistributionConfig = {
+    case epoch if epoch < mainnetMetanomicsV2Epoch =>
       ProgramsDistributionConfig(
         weights = Map(
           stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),
@@ -191,4 +210,6 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
         delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
       )
+    case _ => metanomicsV2DistributionProgram
+  }
 }

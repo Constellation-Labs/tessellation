@@ -250,7 +250,7 @@ object GlobalSnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
       for {
-        acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
+        acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal, epochProgress)
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
           cdsEvents,
           wdsEvents,
@@ -267,7 +267,7 @@ object GlobalSnapshotAcceptanceManager {
           delegatedStakeAcceptanceResult
         )
         acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
-          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, ordinal)
+          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, epochProgress)
           .map(acceptanceResult =>
             acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed))).toSortedMap
           )
@@ -333,13 +333,13 @@ object GlobalSnapshotAcceptanceManager {
           }
 
         rewardsToAccept <-
-          if (rewardsEra.isActive(ordinal))
+          if (rewardsEra.isActive(epochProgress))
             RewardTransactionAggregation
               .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
               .liftTo[F]
           else (withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards).pure[F]
         (updatedBalancesByRewards, acceptedRewardTxs) <-
-          if (rewardsEra.isActive(ordinal))
+          if (rewardsEra.isActive(epochProgress))
             RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).liftTo[F]
           else acceptRewardTxs(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).pure[F]
 
@@ -1140,14 +1140,15 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      ordinal: SnapshotOrdinal
+      ordinal: SnapshotOrdinal,
+      epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
         tipUsages,
-        rewardsEra.collateralAt(ordinal, collateral),
+        rewardsEra.collateralAt(epochProgress, collateral),
         TransactionReference.empty
       )
 
@@ -1165,7 +1166,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastAllowSpendRefs.getOrElse(Map.empty),
-        rewardsEra.collateralAt(snapshotOrdinal, collateral),
+        rewardsEra.collateralAt(epochProgress, collateral),
         AllowSpendReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
@@ -1199,7 +1200,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTokenLockRefs.getOrElse(Map.empty),
-        rewardsEra.collateralAt(snapshotOrdinal, collateral),
+        rewardsEra.collateralAt(epochProgress, collateral),
         TokenLockReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {

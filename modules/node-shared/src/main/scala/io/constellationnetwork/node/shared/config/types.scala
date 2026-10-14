@@ -224,7 +224,9 @@ object types {
   case class ProgramsDistributionConfig(
     weights: Map[Address, NonNegFraction],
     validatorsWeight: NonNegFraction,
-    delegatorsWeight: NonNegFraction
+    delegatorsWeight: NonNegFraction,
+    flatInflationRate: Option[NonNegFraction] = None,
+    fixedCommission: Option[NonNegFraction] = None
   )
 
   case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)

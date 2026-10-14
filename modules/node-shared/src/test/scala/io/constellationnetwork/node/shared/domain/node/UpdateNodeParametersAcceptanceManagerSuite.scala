@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -23,7 +24,7 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
-import eu.timepit.refined.types.numeric.PosInt
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import weaver.MutableIOSuite
 
 object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
@@ -56,9 +57,9 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }
 
-  test("acceptance and historical replay use the supplied artifact ordinal and preserve signed registrations") { res =>
+  test("acceptance and historical replay use the supplied artifact epoch and preserve signed registrations") { res =>
     implicit val (json, h, sp) = res
-    val activation = SnapshotOrdinal.unsafeApply(100L)
+    val activation = EpochProgress(NonNegLong(100L))
     val era = DelegatedRewardsEra(activation, SortedMap.empty)
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -69,10 +70,10 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       historical <- forAsyncHasher(validTestUpdateNodeParameters1(source), keyPair)
       context = mkGlobalContext().copy(balances = SortedMap(source -> Balance(DelegatedRewardsEra.MinimumRegistrationBalance.value)))
       manager = mkAcceptanceManager(Set(peerId), era)
-      before <- manager.acceptUpdateNodeParameters(List(signed, historical), context, SnapshotOrdinal.unsafeApply(99L))
+      before <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(99L)))
       at <- manager.acceptUpdateNodeParameters(List(signed, historical), context, activation)
-      after <- manager.acceptUpdateNodeParameters(List(signed, historical), context, SnapshotOrdinal.unsafeApply(101L))
-      replay <- manager.acceptUpdateNodeParameters(List(signed, historical), context, SnapshotOrdinal.unsafeApply(99L))
+      after <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(101L)))
+      replay <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(99L)))
       inputHash <- h.hash(List(historical, signed))
       acceptedHash <- h.hash(at.accepted)
     } yield

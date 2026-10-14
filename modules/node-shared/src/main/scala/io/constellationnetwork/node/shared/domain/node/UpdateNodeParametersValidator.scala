@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValid
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{RewardFraction, UpdateNodeParameters, UpdateNodeParametersReference}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -30,7 +31,7 @@ trait UpdateNodeParametersValidator[F[_]] {
   def validate(
     signed: Signed[UpdateNodeParameters],
     lastSnapshotContext: GlobalSnapshotInfo,
-    ordinal: SnapshotOrdinal
+    epochProgress: EpochProgress
   ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]]
 
 }
@@ -49,7 +50,7 @@ object UpdateNodeParametersValidator {
       override def validate(
         signed: Signed[UpdateNodeParameters],
         lastSnapshotContext: GlobalSnapshotInfo,
-        ordinal: SnapshotOrdinal
+        epochProgress: EpochProgress
       ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
         for {
           signaturesV <- signedValidator
@@ -60,9 +61,9 @@ object UpdateNodeParametersValidator {
             .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
           rewardFractionV =
-            if (era.isActive(ordinal)) signed.validNec[UpdateNodeParametersValidationError]
+            if (era.isActive(epochProgress)) signed.validNec[UpdateNodeParametersValidationError]
             else validateRewardFraction(signed)
-          nodeV = validateNode(signed, lastSnapshotContext, ordinal)
+          nodeV = validateNode(signed, lastSnapshotContext, epochProgress)
           nodeMetadataParamsV = validateNodeMetadataParams(signed, maxMetadataFieldsChars.value)
         } yield
           signaturesV
@@ -75,12 +76,12 @@ object UpdateNodeParametersValidator {
       private def validateNode(
         signed: Signed[UpdateNodeParameters],
         lastSnapshotContext: GlobalSnapshotInfo,
-        ordinal: SnapshotOrdinal
+        epochProgress: EpochProgress
       ): UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = {
         val nodeIds = signed.proofs.map(_.id).map(PeerId.fromId).toList
 
         nodeIds match {
-          case _ :: Nil if era.isActive(ordinal) =>
+          case _ :: Nil if era.isActive(epochProgress) =>
             val balance = lastSnapshotContext.balances.getOrElse(signed.source, Balance.empty)
             if (balance.satisfiesCollateral(DelegatedRewardsEra.MinimumRegistrationBalance))
               signed.validNec[UpdateNodeParametersValidationError]

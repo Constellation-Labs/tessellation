@@ -6,8 +6,9 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationError
+import io.constellationnetwork.schema.GlobalSnapshotInfo
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 
 trait UpdateNodeParametersAcceptanceManager[F[_]] {
@@ -15,7 +16,7 @@ trait UpdateNodeParametersAcceptanceManager[F[_]] {
   def acceptUpdateNodeParameters(
     signed: List[Signed[UpdateNodeParameters]],
     lastSnapshotContext: GlobalSnapshotInfo,
-    ordinal: SnapshotOrdinal
+    epochProgress: EpochProgress
   ): F[UpdateNodeParametersAcceptanceResult]
 
 }
@@ -26,10 +27,10 @@ object UpdateNodeParametersAcceptanceManager {
       override def acceptUpdateNodeParameters(
         signed: List[Signed[UpdateNodeParameters]],
         lastSnapshotContext: GlobalSnapshotInfo,
-        ordinal: SnapshotOrdinal
+        epochProgress: EpochProgress
       ): F[UpdateNodeParametersAcceptanceResult] =
         for {
-          validated <- signed.traverse(validator.validate(_, lastSnapshotContext, ordinal))
+          validated <- signed.traverse(validator.validate(_, lastSnapshotContext, epochProgress))
           (accepted, notAccepted) = validated
             .zip(signed)
             .foldLeft(

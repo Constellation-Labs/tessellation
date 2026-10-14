@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValid
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -63,7 +64,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       validTestUpdateNodeParameters = testUpdateNodeParameters(source)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
 
@@ -81,7 +82,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
 
@@ -99,7 +100,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
 
@@ -113,7 +114,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       validTestUpdateNodeParameters = testUpdateNodeParameters(source)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set.empty, DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.NodeNotInSeedList(peerId).invalidNec, result)
   }
 
@@ -134,7 +135,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
         )
       )
       validator = mkValidator(Set(peerId1, peerId2), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield
       expect.all(result match {
         case Invalid(errors) =>
@@ -161,7 +162,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(invalidTtestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.InvalidRewardValue(10_000_001).invalidNec, result)
   }
 
@@ -179,7 +180,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(invalidTtestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.InvalidRewardValue(4_999_999).invalidNec, result)
   }
 
@@ -193,7 +194,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       validTestUpdateNodeParameters = testUpdateNodeParameters(source)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
 
@@ -208,7 +209,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       invalidTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.InvalidParent(lastRef).invalidNec, result)
   }
 
@@ -226,7 +227,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       validTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(validTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, context, SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, context, EpochProgress.MinValue)
     } yield expect.same(Valid(signedUpdateNodeParameters), result)
   }
 
@@ -244,7 +245,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       invalidTestUpdateNodeParameters = testUpdateNodeParameters(source).copy(parent = lastRef)
       signedUpdateNodeParameters <- forAsyncHasher(invalidTestUpdateNodeParameters, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, context, SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, context, EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.InvalidParent(lastRef).invalidNec, result)
   }
 
@@ -266,7 +267,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(updatedParametersInvalidName, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.TooLargeName(invalidName, 140).invalidNec, result)
   }
 
@@ -288,11 +289,11 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       )
       signedUpdateNodeParameters <- forAsyncHasher(updatedParametersInvalidName, keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), SnapshotOrdinal.MinValue)
+      result <- validator.validate(signedUpdateNodeParameters, mkGlobalContext(), EpochProgress.MinValue)
     } yield expect.same(UpdateNodeParametersValidator.TooLargeDescription(invalidDescription, 140).invalidNec, result)
   }
 
-  private val activation = SnapshotOrdinal.unsafeApply(100L)
+  private val activation = EpochProgress(NonNegLong(100L))
   private val era = DelegatedRewardsEra(activation, SortedMap.empty)
   private val minimum = DelegatedRewardsEra.MinimumRegistrationBalance.value.value
 
@@ -305,10 +306,10 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(testUpdateNodeParameters(source), keyPair)
       context = mkGlobalContext().copy(balances = SortedMap(source -> Balance(NonNegLong.unsafeFrom(minimum))))
       validator = mkValidator(Set.empty, era)
-      before <- validator.validate(signed, context, SnapshotOrdinal.unsafeApply(99L))
+      before <- validator.validate(signed, context, EpochProgress(NonNegLong(99L)))
       at <- validator.validate(signed, context, activation)
-      after <- validator.validate(signed, context, SnapshotOrdinal.unsafeApply(101L))
-      replay <- validator.validate(signed, context, SnapshotOrdinal.unsafeApply(99L))
+      after <- validator.validate(signed, context, EpochProgress(NonNegLong(101L)))
+      replay <- validator.validate(signed, context, EpochProgress(NonNegLong(99L)))
     } yield
       expect
         .same(NodeNotInSeedList(peerId).invalidNec, before)
@@ -362,7 +363,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
           result <- validator.validate(signed, context, activation)
           afterHash <- result.toOption.traverse(h.hash[Signed[UpdateNodeParameters]])
           afterReference <- result.toOption.traverse(UpdateNodeParametersReference.of[IO])
-          legacy <- validator.validate(signed, context, SnapshotOrdinal.unsafeApply(99L))
+          legacy <- validator.validate(signed, context, EpochProgress(NonNegLong(99L)))
         } yield
           expect
             .same(Valid(signed), result)
@@ -433,7 +434,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
         )
   }
 
-  test("disabled era keeps legacy rules even at the maximum ordinal") { res =>
+  test("disabled era keeps legacy rules even at the maximum epoch") { res =>
     implicit val (json, h, sp) = res
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -441,7 +442,7 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
       peerId = PeerId.fromId(keyPair.getPublic.toId)
       signed <- forAsyncHasher(testUpdateNodeParameters(source), keyPair)
       validator = mkValidator(Set(peerId), DelegatedRewardsEra.Disabled)
-      result <- validator.validate(signed, mkGlobalContext(), SnapshotOrdinal.unsafeApply(Long.MaxValue))
+      result <- validator.validate(signed, mkGlobalContext(), EpochProgress.MaxValue)
     } yield expect.same(Valid(signed), result)
   }
 
