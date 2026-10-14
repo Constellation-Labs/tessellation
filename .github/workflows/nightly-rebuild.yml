@@ -74,6 +74,12 @@ jobs:
             echo "  n$i data wiped"
           done
 
+          # A deploy that restarted from existing data leaves CL_DOCKER_ROLLBACK=true and
+          # CL_DOCKER_ROLLBACK_HASH in n0's .env. With the data wiped, gl0 would then run
+          # run-rollback against an empty store and crash-loop. Drop them so it starts
+          # from genesis.
+          ssh "n0" "sed -i '/^CL_DOCKER_ROLLBACK/d' $DIR/.env"
+
       - name: Ensure monitoring
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
