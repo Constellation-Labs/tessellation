@@ -21,7 +21,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
@@ -254,7 +254,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 validators.pricingUpdateValidator,
                 priceStateUpdater,
                 Amount(0L),
-                EpochProgress(NonNegLong(136080L))
+                EpochProgress(NonNegLong(136080L)),
+                rewardsEra = DelegatedRewardsEra.Disabled
               )
               globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(
                 globalSnapshotAcceptanceManager,

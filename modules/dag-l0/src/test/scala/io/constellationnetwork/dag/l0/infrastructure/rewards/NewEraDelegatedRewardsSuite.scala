@@ -195,7 +195,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
-      legacy <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned)
+      legacy <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.MinValue)
       before <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(99L))
       at <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
       after <- distributor.distribute(context.copy(balances = SortedMap(address1 -> Balance(1000000L))), TimeTrigger, EpochProgress(101L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(101L))

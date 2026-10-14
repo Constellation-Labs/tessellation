@@ -57,19 +57,9 @@ trait DelegatedRewardsDistributor[F[_]] {
     epochProgress: EpochProgress,
     facilitators: List[(Address, PeerId)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-    partitionedRecords: PartitionedStakeUpdates
-  ): F[DelegatedRewardsResult]
-
-  def distribute(
-    lastSnapshotContext: GlobalSnapshotInfo,
-    trigger: ConsensusTrigger,
-    epochProgress: EpochProgress,
-    facilitators: List[(Address, PeerId)],
-    delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates,
     ordinal: SnapshotOrdinal
-  ): F[DelegatedRewardsResult] =
-    distribute(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
+  ): F[DelegatedRewardsResult]
 }
 
 object DelegatedRewardsDistributor {

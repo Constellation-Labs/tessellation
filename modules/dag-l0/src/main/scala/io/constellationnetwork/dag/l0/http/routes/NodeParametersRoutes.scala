@@ -42,7 +42,7 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   nodeStorage: NodeStorage[F],
   cluster: Cluster[F],
   validator: UpdateNodeParametersValidator[F],
-  era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
+  era: DelegatedRewardsEra
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityDecoder

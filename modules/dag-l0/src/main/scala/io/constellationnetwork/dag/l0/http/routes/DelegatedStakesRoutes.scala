@@ -52,7 +52,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
   delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
-  era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
+  era: DelegatedRewardsEra
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 

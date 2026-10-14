@@ -46,8 +46,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       peerId = PeerId.fromId(keyPair.getPublic.toId)
       signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
       signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
-      acceptanceManager = mkAcceptanceManager(Set(peerId))
-      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext())
+      acceptanceManager = mkAcceptanceManager(Set(peerId), DelegatedRewardsEra.Disabled)
+      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext(), SnapshotOrdinal.MinValue)
     } yield
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }
@@ -82,7 +82,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
         .and(expect.same(inputHash, acceptedHash))
   }
 
-  private def mkAcceptanceManager(peersList: Set[PeerId], era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled)(
+  private def mkAcceptanceManager(peersList: Set[PeerId], era: DelegatedRewardsEra)(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
     H: Hasher[IO]

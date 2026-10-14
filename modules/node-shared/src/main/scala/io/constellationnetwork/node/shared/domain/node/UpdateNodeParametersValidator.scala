@@ -29,12 +29,6 @@ trait UpdateNodeParametersValidator[F[_]] {
 
   def validate(
     signed: Signed[UpdateNodeParameters],
-    lastSnapshotContext: GlobalSnapshotInfo
-  ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
-    validate(signed, lastSnapshotContext, SnapshotOrdinal.MinValue)
-
-  def validate(
-    signed: Signed[UpdateNodeParameters],
     lastSnapshotContext: GlobalSnapshotInfo,
     ordinal: SnapshotOrdinal
   ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]]
@@ -49,7 +43,7 @@ object UpdateNodeParametersValidator {
     maxRewardValue: RewardFraction,
     maxMetadataFieldsChars: PosInt,
     seedList: Option[Set[SeedlistEntry]],
-    era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
+    era: DelegatedRewardsEra
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
       override def validate(

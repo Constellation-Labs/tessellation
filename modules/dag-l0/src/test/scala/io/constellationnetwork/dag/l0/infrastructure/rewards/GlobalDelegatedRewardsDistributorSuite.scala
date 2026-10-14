@@ -381,7 +381,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // At transition epoch
         List(address1 -> nodeId1, address2 -> nodeId2),
         stakeAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       // Check if the distribution includes expected components
@@ -531,7 +532,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // At transition epoch
         List(address1 -> nodeId1, address2 -> nodeId2),
         stakeAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       // Check if the distribution includes expected components
@@ -616,7 +618,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // At transition epoch
         List(address1 -> nodeId1),
         stakeAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       expect(result.totalEmittedRewardsAmount == Amount.empty) &&
@@ -730,7 +733,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // Use transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        initialPartitionedUpdates
+        initialPartitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
 
       // Get updated stake records from first distribution
@@ -755,7 +759,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(101L), // Just after transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        partitionedUpdates2
+        partitionedUpdates2,
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       // Test the accumulated total rewards - simpler and more reliable
@@ -867,7 +872,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // At delegated rewards transition
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
 
       // Test with time trigger after transition
@@ -877,7 +883,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(150L), // After delegated rewards transition
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       // Verify reward amounts are correctly calculated
@@ -1060,7 +1067,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // Use exactly the transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        partitionedUpdates
+        partitionedUpdates,
+        ordinal = SnapshotOrdinal.MinValue
       )
 
       // Test with completely empty context at the transition epoch
@@ -1070,7 +1078,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         EpochProgress(100L), // Use exactly the transition epoch
         List(address1 -> nodeId1),
         emptyAcceptanceResult,
-        PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty)
+        PartitionedStakeUpdates(SortedMap.empty, SortedMap.empty, SortedMap.empty),
+        ordinal = SnapshotOrdinal.MinValue
       )
     } yield
       // With zero stakes, there should be no delegator rewards
@@ -1345,7 +1354,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
           EpochProgress(NonNegLong.unsafeFrom(935952L)),
           facilitators,
           emptyAcceptanceResult,
-          partitionedUpdates
+          partitionedUpdates,
+          ordinal = SnapshotOrdinal.MinValue
         )
         .map {
           case DelegatedRewardsResult(

@@ -14,12 +14,6 @@ trait UpdateNodeParametersAcceptanceManager[F[_]] {
 
   def acceptUpdateNodeParameters(
     signed: List[Signed[UpdateNodeParameters]],
-    lastSnapshotContext: GlobalSnapshotInfo
-  ): F[UpdateNodeParametersAcceptanceResult] =
-    acceptUpdateNodeParameters(signed, lastSnapshotContext, SnapshotOrdinal.MinValue)
-
-  def acceptUpdateNodeParameters(
-    signed: List[Signed[UpdateNodeParameters]],
     lastSnapshotContext: GlobalSnapshotInfo,
     ordinal: SnapshotOrdinal
   ): F[UpdateNodeParametersAcceptanceResult]

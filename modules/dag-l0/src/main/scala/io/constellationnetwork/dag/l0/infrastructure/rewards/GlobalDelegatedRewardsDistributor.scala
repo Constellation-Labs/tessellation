@@ -83,7 +83,7 @@ object GlobalDelegatedRewardsDistributor {
             oneTimeRewards
           )
         } yield result
-      } else distribute(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
+      } else distributeLegacy(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
 
     /** Return emission configuration applied by this rewards distributor
       */
@@ -120,7 +120,7 @@ object GlobalDelegatedRewardsDistributor {
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
       * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
       */
-    def distribute(
+    private def distributeLegacy(
       lastSnapshotContext: GlobalSnapshotInfo,
       trigger: ConsensusTrigger,
       epochProgress: EpochProgress,
