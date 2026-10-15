@@ -331,20 +331,19 @@ object GlobalSnapshotAcceptanceManager {
             )
           }
 
-        // one transaction per address across withdrawal, operator and program payouts, so equal amounts to the
-        // same address never collapse in the SortedSet union below
-        rewardTxs <-
+        (updatedBalancesByRewards, acceptedRewardTxs) <- Async[F].fromEither(
           if (DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epochProgress))
-            Async[F].fromEither(
-              RewardTransactionAggregation
-                .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
-                .leftWiden[Throwable]
+            RewardTransactionAggregation
+              .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
+              .leftWiden[Throwable]
+              .flatMap(RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, _))
+          else
+            Right(
+              acceptRewardTxs(
+                updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+              )
             )
-          else (withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards).pure[F]
-
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          rewardTxs
         )
 
         currencyBalances = currencySnapshots.toList.map {

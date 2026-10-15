@@ -15,11 +15,7 @@ import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  DelegatedRewardsDistributor,
-  DelegatedRewardsResult,
-  PartitionedStakeUpdates
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsResult, PartitionedStakeUpdates}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.PricingUpdate
@@ -1557,8 +1553,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       expect(emissionAtStart.value.value == emissionPerEpoch)
         .and(expect(emissionLater.value.value == emissionPerEpoch))
         .and(expect(reserved(MainnetRewardsConfig.protocolWalletMetanomics) == 60_00000000L)) // 30%
-        // Stardust Treasury 10% + AI Inference 15%, both paid to stardustNewPrimary
-        .and(expect(reserved(MainnetRewardsConfig.stardustNewPrimary) == 50_00000000L))
+        .and(expect(reserved(MainnetRewardsConfig.stardustNewPrimary) == 50_00000000L)) // Treasury 10% + AI Inference 15%
         .and(expect(result.reservedAddressRewards.size == 2))
         // validators: 10% split evenly (10 DAG each) plus 10% commission on their delegators' share of the 35% gross
         // pool (1.75 and 5.25 DAG), paid as one transaction per address
@@ -1569,6 +1564,64 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         .and(expect(delegator(v2NodeBId, address2) == 47_25000000L))
         .and(expect(result.totalEmittedRewardsAmount.value.value == emissionPerEpoch))
     }
+  }
+
+  test("fixed commission from offline nodes is redistributed while all retained delegations accrue rewards") {
+    val stakes = SortedMap(
+      address1 -> SortedSet(v2Stake(address1, v2NodeAId, 1000_00000000L)),
+      address2 -> SortedSet(v2Stake(address2, v2NodeBId, 3000_00000000L))
+    )
+    val context = GlobalSnapshotInfo.empty.copy(
+      updateNodeParameters = SortedMap(
+        v2NodeAId -> (v2NodeParams(v2NodeAAddress, v2NodeAId, 5000000), SnapshotOrdinal.unsafeApply(1L)),
+        v2NodeBId -> (v2NodeParams(v2NodeBAddress, v2NodeBId, 8000000), SnapshotOrdinal.unsafeApply(1L))
+      ).some,
+      activeDelegatedStakes = stakes.some
+    )
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, v2DevConfig)
+      active <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(v2NodeAAddress -> v2NodeAId.toPeerId),
+        v2EmptyAcceptance,
+        v2Partitioned(stakes)
+      )
+      noSigners <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), Nil, v2EmptyAcceptance, v2Partitioned(stakes))
+    } yield
+      expect(
+        v2Operator(active)(v2NodeAAddress) == List(27_00000000L),
+        "The active signer receives twenty DAG direct and the entire seven DAG commission pool"
+      )
+        .and(expect(v2Operator(active)(v2NodeBAddress).isEmpty, "The offline operator receives no payout"))
+        .and(expect(v2Delegator(active)(v2NodeAId, address1) == 15_75000000L, "The active node's delegation earns its net share"))
+        .and(expect(v2Delegator(active)(v2NodeBId, address2) == 47_25000000L, "The offline node's delegation still earns its net share"))
+        .and(
+          expect(
+            active.updatedCreateDelegatedStakes(address1).head.rewards.value.value == 15_75000000L,
+            "Active-node rewards are actually accrued"
+          )
+        )
+        .and(
+          expect(
+            active.updatedCreateDelegatedStakes(address2).head.rewards.value.value == 47_25000000L,
+            "Offline-node rewards are actually accrued"
+          )
+        )
+        .and(expect(active.totalEmittedRewardsAmount.value.value == 200_00000000L, "Full recipient pools account for the full emission"))
+        .and(expect(noSigners.nodeOperatorRewards.isEmpty, "No signer means neither direct rewards nor commission are minted"))
+        .and(
+          expect(noSigners.delegatorRewardsMap == active.delegatorRewardsMap, "Signer availability does not affect delegator allocation")
+        )
+        .and(
+          expect(
+            noSigners.totalEmittedRewardsAmount.value.value == 173_00000000L,
+            "Only reserved and net delegation payouts are minted without signers"
+          )
+        )
   }
 
   test("mainnet distribution at mainnetMetanomicsV2Epoch follows the fixed-emission metanomics with the real config") {

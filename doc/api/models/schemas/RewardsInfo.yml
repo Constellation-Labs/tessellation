@@ -25,7 +25,10 @@ properties:
   totalDagAmount:
     type: integer
     format: int64
-    description: Current total supply of all DAG balances in datums
+    description: >-
+      DAG supply in datums. After the delegated rewards era activates, includes
+      native wallet balances, native token-lock and allow-spend escrow principal,
+      and active or pending delegation rewards. Excludes metagraph currencies.
   totalRewardsPerLatestEpoch:
     type: integer
     format: int64
