@@ -6,11 +6,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.RewardAcceptanceManager
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{AmountOverflow, Balance}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.PosLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import weaver.SimpleIOSuite
 
 object RewardTransactionAggregationSuite extends SimpleIOSuite {
@@ -76,5 +76,28 @@ object RewardTransactionAggregationSuite extends SimpleIOSuite {
     expect(legacy.map(_._1(operator)) == Right(Balance(1350L)))
       .and(expect(combined.map(_._1(operator)) == Right(Balance(2700L))))
       .and(expect(combined.map(_._2) == Right(SortedSet(reward(operator, 2700L)))))
+  }
+
+  pureTest("checked credit pays existing and new recipients while preserving unrelated balances and accepted rewards") {
+    val unaffected = Address("DAG5bvqxSJmbWVwcKWEU7nb3sgTnN1QZMPi4F8Cc")
+    val balances = SortedMap(operator -> Balance(100L), unaffected -> Balance(999L))
+    val rewards = SortedSet(reward(operator, 17L), reward(treasury, 23L))
+    val expectedBalances = SortedMap(operator -> Balance(117L), treasury -> Balance(23L), unaffected -> Balance(999L))
+
+    expect(
+      RewardAcceptanceManager.acceptRewardTxsChecked(balances, rewards).map { case (b, accepted, _) => (b, accepted) } ==
+        Right((expectedBalances, rewards)),
+      "every reward must be credited exactly once, including a destination without a previous balance"
+    )
+  }
+
+  pureTest("checked credit rejects the entire payout when an existing destination balance would overflow") {
+    val balances = SortedMap(operator -> Balance(NonNegLong.unsafeFrom(Long.MaxValue)), treasury -> Balance(50L))
+    val rewards = SortedSet(reward(operator, 1L), reward(treasury, 23L))
+
+    expect(
+      RewardAcceptanceManager.acceptRewardTxsChecked(balances, rewards) == Left(AmountOverflow),
+      "an individually valid reward must not be silently dropped or return partially credited balances when the recipient is full"
+    )
   }
 }

@@ -7,8 +7,7 @@ import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect._
 import cats.effect.std.Supervisor
 import cats.implicits.none
-import cats.syntax.applicative._
-import cats.syntax.list._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -18,7 +17,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
-import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
+import io.constellationnetwork.dag.l0.infrastructure.rewards.{GlobalDelegatedRewardsDistributor, RewardsService}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{AllowSpendEvent, GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.Dev
@@ -26,7 +25,11 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.config.{DelegatedRewardsConfigProvider, FieldsAddedOrdinalsFixtures}
+import io.constellationnetwork.node.shared.config.{
+  DefaultDelegatedRewardsConfigProvider,
+  DelegatedRewardsConfigProvider,
+  FieldsAddedOrdinalsFixtures
+}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -45,7 +48,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -59,11 +62,12 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
-import io.constellationnetwork.schema.node.RewardFraction
+import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.swap._
-import io.constellationnetwork.schema.tokenLock.TokenLockBlock
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -358,7 +362,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   def mkGlobalSnapshotAcceptanceManager(
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO],
     mptStore: MptStore[IO, GlobalStateKey],
-    dbLogger: LoggerBundle[IO]
+    dbLogger: LoggerBundle[IO],
+    environment: AppEnvironment = Dev,
+    configProvider: DelegatedRewardsConfigProvider = delegatedRewardsConfigProvider,
+    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L))
   )(
     implicit j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
@@ -369,13 +376,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val spendActionValidator = SpendActionValidator.make[IO]
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
-    val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
+    val priceStateUpdater = PriceStateUpdater.make(environment, configProvider)
 
     GlobalSnapshotAcceptanceManager
       .make[IO](
         FieldsAddedOrdinalsFixtures.current,
         MetagraphsSyncConfig(PosInt(100)),
-        Dev,
+        environment,
         bam,
         allowSpendBlockAcceptanceManager,
         tlbam,
@@ -387,14 +394,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         pricingUpdateValidator,
         priceStateUpdater,
         collateral,
-        EpochProgress(NonNegLong(136080L)),
+        withdrawalDelay,
         mptStore,
         dbLogger
       )
   }
 
   def mkGlobalSnapshotConsensusFunctions(
-    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam,
+    environment: AppEnvironment = Dev,
+    rewards: DelegatedRewardsDistributor[IO] = delegatorRewards,
+    configProvider: DelegatedRewardsConfigProvider = delegatedRewardsConfigProvider,
+    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L))
   )(
     implicit j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
@@ -406,7 +417,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val spendActionValidator = SpendActionValidator.make[IO]
 
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
-    val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -423,10 +433,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         GlobalStateKey.toHex[IO]
       )
       dbLogger <- Slf4jLoggerBundle.makeUnsafe[IO]
-      snapshotAcceptanceManager = mkGlobalSnapshotAcceptanceManager(allowSpendBlockAcceptanceManager, mptStore, dbLogger)
+      snapshotAcceptanceManager = mkGlobalSnapshotAcceptanceManager(
+        allowSpendBlockAcceptanceManager,
+        mptStore,
+        dbLogger,
+        environment,
+        configProvider,
+        withdrawalDelay
+      )
       rewardsInfoStorage <- RewardsInfoStorage.make
-      rewardsInfoCalculator = RewardsInfoCalculator.make(delegatorRewards)
-      rewardsService = RewardsService[IO](classicRewards, delegatorRewards, rewardsInfoCalculator, rewardsInfoStorage)
+      rewardsInfoCalculator = RewardsInfoCalculator.make(rewards)
+      rewardsService = RewardsService[IO](classicRewards, rewards, rewardsInfoCalculator, rewardsInfoStorage)
       globalSnapshotConsensusFunction = GlobalSnapshotConsensusFunctions
         .make[IO](
           snapshotAcceptanceManager,
@@ -434,8 +451,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           rewardsService,
           GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
           UpdateNodeParametersCutter.make(100),
-          AppEnvironment.Dev,
-          delegatedRewardsConfigProvider,
+          environment,
+          configProvider,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
@@ -1012,4 +1029,202 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelEvent(StateChannelOutput(keyPair.getPublic.toAddress, signedSC))
 
+  test("real reward acceptance and historical recreation preserve state across the approved metanomics boundary") { res =>
+    implicit val (_, j, h, sp, m) = res
+    implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
+    val activation = DefaultDelegatedRewardsConfigProvider.mainnetMetanomicsV2Epoch
+    val withdrawalDelay = EpochProgress(1L)
+    val protocol = io.constellationnetwork.node.shared.config.MainnetRewardsConfig.protocolWalletMetanomics
+    val stardust = io.constellationnetwork.node.shared.config.MainnetRewardsConfig.stardustNewPrimary
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      node = PeerId.fromPublic(keyPair.getPublic)
+      config = DelegatedRewardsConfig(
+        flatInflationRate = NonNegFraction.zero,
+        emissionConfig = Map(AppEnvironment.Mainnet -> { epoch: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(1L),
+            asOfEpoch = EpochProgress.MinValue,
+            iTarget = NonNegFraction.unsafeFrom(2, 100),
+            iInitial = NonNegFraction.unsafeFrom(2, 100),
+            lambda = NonNegFraction.zero,
+            iImpact = NonNegFraction.zero,
+            totalSupply = Amount(500000L),
+            dagPrices = SortedMap(EpochProgress.MinValue -> NonNegFraction.one),
+            epochsPerMonth = NonNegLong(1L),
+            ledgerSupply = epoch >= activation
+          )
+        }),
+        percentDistribution = Map(AppEnvironment.Mainnet -> { epoch: EpochProgress =>
+          if (epoch >= activation) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+          else
+            ProgramsDistributionConfig(
+              Map(
+                protocol -> NonNegFraction.unsafeFrom(30, 100),
+                stardust -> NonNegFraction.unsafeFrom(25, 100)
+              ),
+              NonNegFraction.unsafeFrom(10, 100),
+              NonNegFraction.unsafeFrom(35, 100)
+            )
+        }),
+        oneTimeRewards = Map(AppEnvironment.Mainnet -> List.empty),
+        priceOracleEpoch = Map(AppEnvironment.Mainnet -> EpochProgress.MaxValue)
+      )
+      provider = new DelegatedRewardsConfigProvider { def getConfig(): DelegatedRewardsConfig = config }
+      rewards = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Mainnet, config)
+      locks <- List(100L, 600L).traverse { amount =>
+        Signed
+          .forAsyncHasher[IO, TokenLock](
+            TokenLock(address, TokenLockAmount(PosLong.unsafeFrom(amount)), TokenLockFee(0L), TokenLockReference.empty, None, None),
+            keyPair
+          )
+          .flatMap(_.toHashed)
+      }
+      delegations <- locks.traverse { lock =>
+        Signed.forAsyncHasher[IO, UpdateDelegatedStake.Create](
+          UpdateDelegatedStake.Create(
+            address,
+            node,
+            DelegatedStakeAmount(NonNegLong.unsafeFrom(lock.signed.value.amount.value.value)),
+            tokenLockRef = lock.hash
+          ),
+          keyPair
+        )
+      }
+      parameters <- Signed.forAsyncHasher[IO, UpdateNodeParameters](
+        UpdateNodeParameters(
+          address,
+          DelegatedStakeRewardParameters(RewardFraction(10_000_000)),
+          NodeMetadataParameters("", ""),
+          UpdateNodeParametersReference.empty
+        ),
+        keyPair
+      )
+      info = GlobalSnapshotInfo.empty.copy(
+        balances = SortedMap(address -> Balance(497950L)),
+        activeTokenLocks = Some(SortedMap(address -> SortedSet.from(locks.map(_.signed)))),
+        activeDelegatedStakes =
+          Some(SortedMap(address -> SortedSet(DelegatedStakeRecord(delegations.head, SnapshotOrdinal.unsafeApply(1L), Balance.empty)))),
+        delegatedStakesWithdrawals = Some(
+          SortedMap(
+            address -> SortedSet(
+              PendingDelegatedStakeWithdrawal(delegations(1), Balance(1350L), SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
+            )
+          )
+        ),
+        updateNodeParameters = Some(SortedMap(node.toId -> (parameters -> SnapshotOrdinal.unsafeApply(1L))))
+      )
+      consensus <- mkGlobalSnapshotConsensusFunctions(
+        environment = AppEnvironment.Mainnet,
+        rewards = rewards,
+        configProvider = provider,
+        withdrawalDelay = withdrawalDelay
+      )
+      // replay runs on its own MPT store, as a downloading node would
+      replayMptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      replayMptStore <- MptStore.make[IO, GlobalStateKey](replayMptProducer, GlobalStateKey.toHex[IO])
+      dbLogger <- Slf4jLoggerBundle.makeUnsafe[IO]
+      acceptance = mkGlobalSnapshotAcceptanceManager(
+        asbam,
+        replayMptStore,
+        dbLogger,
+        environment = AppEnvironment.Mainnet,
+        configProvider = provider,
+        withdrawalDelay = withdrawalDelay
+      )
+      recreation = GlobalSnapshotContextFunctions
+        .make[IO](
+          acceptance,
+          updateDelegatedStakeAcceptanceManager,
+          withdrawalDelay,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
+          replayMptStore,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue
+        )
+      expectations <- List(
+        (
+          SnapshotOrdinal.unsafeApply(9000L),
+          EpochProgress(NonNegLong.unsafeFrom(activation.value.value - 1L)),
+          TimeTrigger: ConsensusTrigger
+        ),
+        (SnapshotOrdinal.unsafeApply(1L), activation, TimeTrigger: ConsensusTrigger),
+        (SnapshotOrdinal.unsafeApply(2L), EpochProgress(NonNegLong.unsafeFrom(activation.value.value + 1L)), TimeTrigger: ConsensusTrigger),
+        (SnapshotOrdinal.unsafeApply(3L), activation, EventTrigger: ConsensusTrigger)
+      ).traverse {
+        case (ordinal, epoch, trigger) =>
+          val previousEpoch = if (trigger == TimeTrigger) EpochProgress(NonNegLong.unsafeFrom(epoch.value.value - 1L)) else epoch
+          for {
+            genesis <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, previousEpoch))
+            previousOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(ordinal.value.value - 1L))
+            previousProof <- info.stateProof[IO](previousOrdinal)
+            previous <- Signed
+              .forAsyncHasher[IO, GlobalIncrementalSnapshot](genesis.copy(ordinal = previousOrdinal, stateProof = previousProof), keyPair)
+            proposal <- consensus.createProposalArtifact(
+              previousOrdinal,
+              previous,
+              info,
+              h,
+              trigger,
+              Set.empty,
+              Set(node),
+              _ => None.pure[IO]
+            )
+            (artifact, producedInfo, _) = proposal
+            signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact, keyPair)
+            replayedInfo <- recreation.createContext(info, previous, signedArtifact, _ => None.pure[IO])
+            replayedProof <- replayedInfo.stateProof[IO](ordinal)
+            producedHash <- h.hash(producedInfo)
+            replayedHash <- h.hash(replayedInfo)
+            nextSupply <- CurrentDagSupply.calculate(producedInfo).liftTo[IO]
+          } yield {
+            val protocolPayout = artifact.rewards.filter(_.destination == protocol).toList.map(_.amount.value.value).sum
+            val stardustPayouts = artifact.rewards.filter(_.destination == stardust).toList.map(_.amount.value.value)
+            val rewardChecks =
+              if (trigger == EventTrigger)
+                expect(protocolPayout == 0L, "EventTrigger issues no program reward")
+                  .and(expect(stardustPayouts.isEmpty, "EventTrigger issues no Stardust reward"))
+                  .and(expect(artifact.delegateRewards.exists(_.isEmpty), "EventTrigger has no new delegation accrual"))
+                  .and(expect(producedInfo.balances(address).value.value == 499900L, "Withdrawal rewards and principal are credited once"))
+                  .and(expect(nextSupply.value.value == 500000L, "Withdrawal conserves outstanding supply"))
+              else
+                expect(protocolPayout == 3000L, "Protocol receives 30% of the 10000 datum emission")
+                  .and(expect.same(List(2500L), stardustPayouts))
+                  .and(expect.same(2500L, producedInfo.balances(stardust).value.value))
+                  .and(
+                    expect(
+                      producedInfo.balances(address).value.value == 501250L,
+                      "Operator payout and equal withdrawal both reach the wallet"
+                    )
+                  )
+                  .and(
+                    expect(producedInfo.activeDelegatedStakes.get(address).head.rewards.value.value == 3150L, "Net delegation accrues once")
+                  )
+                  .and(expect(nextSupply.value.value == 510000L, "Only the epoch emission increases supply"))
+                  .and(
+                    expect(
+                      artifact.rewards.count(_.destination == address) == (if (epoch >= activation) 1 else 3),
+                      "The activation boundary preserves legacy transactions then aggregates operator and withdrawal payments"
+                    )
+                  )
+
+            expect(artifact.ordinal == ordinal, s"Producer exercised the requested boundary $ordinal")
+              .and(expect(replayedInfo == producedInfo, s"Actual download/replay context must equal production at $ordinal/$trigger"))
+              .and(expect(replayedProof == artifact.stateProof, s"Replayed state proof must equal the signed proof at $ordinal/$trigger"))
+              .and(expect(replayedHash == producedHash, s"Full state encoding must match at $ordinal/$trigger"))
+              .and(expect(producedInfo.delegatedStakesWithdrawals.exists(_.isEmpty), "Expired withdrawal records are removed"))
+              .and(
+                expect(
+                  producedInfo.activeTokenLocks.exists(_.get(address).exists(_.size == 1)),
+                  "Only the active stake's token lock remains"
+                )
+              )
+              .and(rewardChecks)
+          }
+      }
+    } yield expectations.reduce(_ and _)
+  }
 }

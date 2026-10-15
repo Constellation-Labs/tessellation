@@ -2399,4 +2399,62 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         p.fixedCommission.isEmpty && p.flatInflationRate.isEmpty
       }))
   }
+
+  test("fixed commission from offline nodes is redistributed while all retained delegations accrue rewards") {
+    val stakes = SortedMap(
+      address1 -> SortedSet(v2Stake(address1, v2NodeAId, 1000_00000000L)),
+      address2 -> SortedSet(v2Stake(address2, v2NodeBId, 3000_00000000L))
+    )
+    val context = GlobalSnapshotInfo.empty.copy(
+      updateNodeParameters = SortedMap(
+        v2NodeAId -> (v2NodeParams(v2NodeAAddress, v2NodeAId, 5000000), SnapshotOrdinal.unsafeApply(1L)),
+        v2NodeBId -> (v2NodeParams(v2NodeBAddress, v2NodeBId, 8000000), SnapshotOrdinal.unsafeApply(1L))
+      ).some,
+      activeDelegatedStakes = stakes.some
+    )
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, v2DevConfig)
+      active <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(v2NodeAAddress -> v2NodeAId.toPeerId),
+        v2EmptyAcceptance,
+        v2Partitioned(stakes)
+      )
+      noSigners <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), Nil, v2EmptyAcceptance, v2Partitioned(stakes))
+    } yield
+      expect(
+        v2Operator(active)(v2NodeAAddress) == List(27_00000000L),
+        "The active signer receives twenty DAG direct and the entire seven DAG commission pool"
+      )
+        .and(expect(v2Operator(active)(v2NodeBAddress).isEmpty, "The offline operator receives no payout"))
+        .and(expect(v2Delegator(active)(v2NodeAId, address1) == 15_75000000L, "The active node's delegation earns its net share"))
+        .and(expect(v2Delegator(active)(v2NodeBId, address2) == 47_25000000L, "The offline node's delegation still earns its net share"))
+        .and(
+          expect(
+            active.updatedCreateDelegatedStakes(address1).head.rewards.value.value == 15_75000000L,
+            "Active-node rewards are actually accrued"
+          )
+        )
+        .and(
+          expect(
+            active.updatedCreateDelegatedStakes(address2).head.rewards.value.value == 47_25000000L,
+            "Offline-node rewards are actually accrued"
+          )
+        )
+        .and(expect(active.totalEmittedRewardsAmount.value.value == 200_00000000L, "Full recipient pools account for the full emission"))
+        .and(expect(noSigners.nodeOperatorRewards.isEmpty, "No signer means neither direct rewards nor commission are minted"))
+        .and(
+          expect(noSigners.delegatorRewardsMap == active.delegatorRewardsMap, "Signer availability does not affect delegator allocation")
+        )
+        .and(
+          expect(
+            noSigners.totalEmittedRewardsAmount.value.value == 173_00000000L,
+            "Only reserved and net delegation payouts are minted without signers"
+          )
+        )
+  }
 }
