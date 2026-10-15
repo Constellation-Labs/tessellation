@@ -14,14 +14,17 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{DownloadMode, NodeStorage}
+import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage => ClusterStorageImpl}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
+import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId, Responsive}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -29,7 +32,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.PosInt
+import eu.timepit.refined.types.numeric.{PosInt, PosLong}
 import fs2.Stream
 import io.circe.Encoder
 import monocle.Lens
@@ -104,12 +107,15 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
     runCount: Ref[IO, Int],
     cleanupCount: Ref[IO, Int],
     finishCount: Ref[IO, Int],
-    updateCount: Ref[IO, Int]
+    updateCount: Ref[IO, Int],
+    gate: FirstRoundStartGate[IO, SnapshotOrdinal],
+    reentryEpisode: Ref[IO, Long],
+    recoveryDownloads: Ref[IO, Int]
   )
 
   private def unused[A]: A = null.asInstanceOf[A]
 
-  private def nodeStorage(state: Ref[IO, NodeState]): NodeStorage[IO] = new NodeStorage[IO] {
+  private def nodeStorage(state: Ref[IO, NodeState], recoveryDownloads: Ref[IO, Int]): NodeStorage[IO] = new NodeStorage[IO] {
     def getNodeState: IO[NodeState] = state.get
     def setNodeState(nodeState: NodeState): IO[Unit] = state.set(nodeState)
 
@@ -130,7 +136,7 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
     def clearJoiningGracePeriod: IO[Unit] = IO.unit
     def decrementJoiningGracePeriod: IO[Unit] = IO.unit
     def isInJoiningGracePeriod: IO[Boolean] = false.pure[IO]
-    def setRecoveryDownload: IO[Unit] = IO.unit
+    def setRecoveryDownload: IO[Unit] = recoveryDownloads.update(_ + 1)
     def clearRecoveryDownload: IO[Unit] = IO.unit
     def isRecoveryDownload: IO[Boolean] = false.pure[IO]
     def setFollowerCatchUpDownload: IO[Unit] = IO.unit
@@ -139,7 +145,11 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
     def isValidatorMode: IO[Boolean] = false.pure[IO]
   }
 
-  private def harness(initialNodeState: NodeState, initiallyRunning: Boolean): Resource[IO, Harness] =
+  private def harness(
+    initialNodeState: NodeState,
+    initiallyRunning: Boolean,
+    peers: Map[PeerId, Peer] = Map.empty
+  ): Resource[IO, Harness] =
     for {
       supervisor <- Supervisor[IO]
       random <- Resource.eval(Random.scalaUtilRandom[IO])
@@ -159,6 +169,9 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
       cancelSignal <- Resource.eval(Ref.of[IO, Option[cats.effect.Deferred[IO, Unit]]](None))
       recovered <- Resource.eval(Ref.of[IO, Option[SnapshotOrdinal]](None))
       retriable <- Resource.eval(Ref.of[IO, (Option[SnapshotOrdinal], Int)]((None, 0)))
+      reentryEpisode <- Resource.eval(Ref.of[IO, Long](0L))
+      recoveryDownloads <- Resource.eval(Ref.of[IO, Int](0))
+      clusterStorage <- Resource.eval(ClusterStorageImpl.make[IO](ClusterId("8d07c061-d42f-4d9c-9efc-37e0d1ee73e7"), peers))
     } yield {
       implicit val randomIO: Random[IO] = random
       implicit val supervisorIO: Supervisor[IO] = supervisor
@@ -209,8 +222,8 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         advancer = advancer,
         remover = unused[ConsensusStateRemover[IO, SnapshotOrdinal, Unit, String, String, String, TestOutcome, String]],
         ops = unused[ConsensusOps[String, String]],
-        nodeStorage = nodeStorage(state),
-        clusterStorage = unused[ClusterStorage[IO]],
+        nodeStorage = nodeStorage(state, recoveryDownloads),
+        clusterStorage = clusterStorage,
         logger = Slf4jLogger.getLogger[IO],
         config = consensusConfig,
         fns = unused[ConsensusFunctions[IO, Unit, SnapshotOrdinal, String, String]],
@@ -230,7 +243,8 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         onOutcomeSafetyInitialized = _ => IO.unit,
         onOutcomeRollbackInitialized = (_, _) => IO.unit,
         recoveredAtKeyRef = recovered,
-        retriableAtSameKeyRef = retriable
+        retriableAtSameKeyRef = retriable,
+        normalFirstRoundReentryEpisodeRef = reentryEpisode
       )
 
       val runner: Runner = new ConsensusRoundRunner[IO, Unit, SnapshotOrdinal, String, String, String, TestOutcome, String](
@@ -253,7 +267,10 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         runCount,
         cleanupCount,
         finishCount,
-        updateCount
+        updateCount,
+        firstRoundGate,
+        reentryEpisode,
+        recoveryDownloads
       )
     }
 
@@ -424,6 +441,42 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         cleanups <- h.cleanupCount.get
         immediatelyRequeued <- h.queue.tryTake
       } yield expect.all(running, state.nonEmpty, cleanups == 0, immediatelyRequeued.isEmpty)
+    }
+  }
+
+  private def peer(name: String, session: Long): Peer =
+    Peer(
+      PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString)),
+      com.comcast.ip4s.Host.fromString("127.0.0.1").get,
+      com.comcast.ip4s.Port.fromInt(9000).get,
+      com.comcast.ip4s.Port.fromInt(9001).get,
+      ClusterSessionToken(Generation(PosLong.unsafeFrom(1L))),
+      SessionToken(Generation(PosLong.unsafeFrom(session))),
+      NodeState.Ready,
+      Responsive,
+      Hash.fromBytes("jar".getBytes("UTF-8"))
+    )
+
+  test("NormalFirstRoundFallback is decided on the command loop and bound to the pending permit generation and origin session") {
+    val origin = peer("origin", session = 1L)
+    val staleOrigin = origin.copy(session = SessionToken(Generation(PosLong.unsafeFrom(2L))))
+
+    harness(NodeState.Ready, initiallyRunning = false, peers = Map(origin.id -> origin)).use { h =>
+      for {
+        permit <- h.gate.arm(parentKey)
+        superseded = FirstRoundStartGate.Permit(parentKey, permit.generation - 1L)
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(superseded, origin, 1L))
+        afterStalePermit <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, staleOrigin, 2L))
+        afterStaleOrigin <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, origin, 3L))
+        afterCurrent <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
+        stillHeld <- h.gate.isPending(permit)
+      } yield
+        expect.same((NodeState.Ready, 0L, 0), afterStalePermit) &&
+          expect.same((NodeState.Ready, 0L, 0), afterStaleOrigin) &&
+          expect.same((NodeState.WaitingForDownload, 1L, 1), afterCurrent) &&
+          expect(stillHeld, "the fallback never opens the gate; the replacement initialization arms the next generation")
     }
   }
 }

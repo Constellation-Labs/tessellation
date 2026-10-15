@@ -65,6 +65,14 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   // without relying on gossip self-loopback. Rumor handler still uses it for peer-inbound writes.
   def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
 
+  /** Per-peer count of Facility declarations accepted into resources this session, replacements included (`addFacility` is
+    * latest-write-wins, so a fresh Facility from an already-counted peer is a new receipt). Monotonic for the life of the storage: never
+    * reset by round cleanup, abandonment or re-initialization, so the sum over external peers is a receipt revision that the isolation
+    * repair silence clock can compare against its high-water mark (a declaration-map count cannot express a same-count replacement).
+    * Telemetry only, never a decision input.
+    */
+  private[consensus] def getFacilityReceipts: F[Map[PeerId, Long]]
+
   // Public for the same exact-self-store reason as Facility and signatures. A leader must
   // install the Proposal it captured before direct delivery; otherwise a missing self-loopback
   // can enter the re-spread path and rebuild a different certificate envelope for the same view.
@@ -584,6 +592,9 @@ object ConsensusStorage {
       // (see Bug B in the fork-recovery post-mortem: peersAtHigherKey=0 forever
       // because registered keys never advance as peers progress).
       peerCurrentKeysR <- Ref.of(Map.empty[PeerId, Key])
+      // Monotonic per-peer receipts of accepted Facilities (see `getFacilityReceipts`); deliberately outside
+      // resourcesR so cleanup and replenishment to the same declaration count still read as new arrivals.
+      facilityReceiptsR <- Ref.of(Map.empty[PeerId, Long])
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
 
@@ -732,7 +743,13 @@ object ConsensusStorage {
           // Facility after a real view-change, in which case the newer set is what they currently believe.
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.facility).replace(facility.some)
+          }.flatTap { accepted =>
+            facilityReceiptsR
+              .update(_.updatedWith(peerId)(count => (count.getOrElse(0L) + 1L).some))
+              .whenA(accepted.isDefined)
           }
+
+        def getFacilityReceipts: F[Map[PeerId, Long]] = facilityReceiptsR.get
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>

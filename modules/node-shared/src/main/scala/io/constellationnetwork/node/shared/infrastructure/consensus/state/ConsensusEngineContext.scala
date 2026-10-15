@@ -164,6 +164,11 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // leader selection; alpha.104 showed nodes can restart the same key with different local retry
   // counts and then emit non-coalescing VCVs from different views.
   retriableAtSameKeyRef: Ref[F, (Option[Key], Int)],
+  // Per node session count of successful rollback-follower re-entries into recovery download.
+  // Owned by `StateTransitions.scheduleNormalFirstRoundFollower`: it lives outside the short-lived
+  // follower loop so repeated download -> follower -> re-download cycles are visible, increments
+  // only on a successful result-returning node-state transition, and resets on a finalized round.
+  normalFirstRoundReentryEpisodeRef: Ref[F, Long],
   normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
 )
 
@@ -209,6 +214,7 @@ object ConsensusEngineContext {
       firstRoundStartGate <- FirstRoundStartGate.make[F, Key](initiallyHoldFirstRound)
       recoveredAtKey <- Ref.of[F, Option[Key]](None)
       retriableAtSameKey <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
+      normalFirstRoundReentryEpisode <- Ref.of[F, Long](0L)
     } yield
       ConsensusEngineContext(
         selfId,
@@ -246,6 +252,7 @@ object ConsensusEngineContext {
         onOutcomeRollbackInitialized,
         recoveredAtKey,
         retriableAtSameKey,
+        normalFirstRoundReentryEpisode,
         normalFirstRoundAlignment
       )
 }

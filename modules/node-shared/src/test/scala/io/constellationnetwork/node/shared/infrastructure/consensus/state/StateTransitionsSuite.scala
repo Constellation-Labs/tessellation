@@ -17,6 +17,13 @@ object StateTransitionsSuite extends SimpleIOSuite {
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
 
+  private val parentKey = 10
+  private val parentHash = Hash.fromBytes("parent".getBytes("UTF-8"))
+  private val aheadHash = Hash.fromBytes("ahead".getBytes("UTF-8"))
+  private val alignedAtParent = StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned(parentKey, parentHash)
+  private val aheadOfParent = StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead(parentKey + 2, aheadHash)
+  private val mismatchedAtParent = StateTransitions.NormalFirstRoundPulsePeerOutcome.MismatchedAtP(parentKey, parentHash)
+
   test("download validation completes before the first mutation") {
     for {
       events <- Ref.of[IO, List[String]](Nil)
@@ -270,8 +277,8 @@ object StateTransitionsSuite extends SimpleIOSuite {
       aheadProbeOrigins = Set.empty,
       responsivePeerStates = Map(nonLeadMember -> NodeState.Ready, unrelated -> NodeState.Ready),
       peerOutcomes = Map(
-        nonLeadMember -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned,
-        unrelated -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
+        nonLeadMember -> alignedAtParent,
+        unrelated -> alignedAtParent
       )
     )
 
@@ -299,10 +306,10 @@ object StateTransitionsSuite extends SimpleIOSuite {
         wrongState -> NodeState.Observing
       ),
       peerOutcomes = Map(
-        ahead -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead,
-        aligned -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned,
-        mismatched -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Mismatched,
-        wrongState -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
+        ahead -> aheadOfParent,
+        aligned -> alignedAtParent,
+        mismatched -> mismatchedAtParent,
+        wrongState -> alignedAtParent
       )
     )
 
@@ -321,34 +328,34 @@ object StateTransitionsSuite extends SimpleIOSuite {
       matchingFacilityOrigins = Set(aligned),
       aheadProbeOrigins = Set.empty,
       responsivePeerStates = Map(aligned -> NodeState.Ready),
-      peerOutcomes = Map(aligned -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned)
+      peerOutcomes = Map(aligned -> alignedAtParent)
     )
 
-    expect(StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryAlreadyTriggered = false)) &&
-    expect(!StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryAlreadyTriggered = true))
+    expect(StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryOnly = false)) &&
+    expect(!StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryOnly = true))
   }
 
   pureTest("a future declaration can trigger catch-up but cannot replace the Facility release pulse") {
     val self = pid("pulse-self")
     val future = pid("pulse-future")
     val committee = SortedSet(self, future)
-    val alignedAtParent = StateTransitions.normalFirstRoundPulseStatus(
+    val servingParent = StateTransitions.normalFirstRoundPulseStatus(
       committee,
       matchingFacilityOrigins = Set.empty,
       aheadProbeOrigins = Set(future),
       responsivePeerStates = Map(future -> NodeState.Ready),
-      peerOutcomes = Map(future -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned)
+      peerOutcomes = Map(future -> alignedAtParent)
     )
     val committedAhead = StateTransitions.normalFirstRoundPulseStatus(
       committee,
       matchingFacilityOrigins = Set.empty,
       aheadProbeOrigins = Set(future),
       responsivePeerStates = Map(future -> NodeState.Ready),
-      peerOutcomes = Map(future -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead)
+      peerOutcomes = Map(future -> aheadOfParent)
     )
 
-    expect(alignedAtParent.releaseOrigin.isEmpty) &&
-    expect(alignedAtParent.aheadOrigin.isEmpty) &&
+    expect(servingParent.releaseOrigin.isEmpty) &&
+    expect(servingParent.aheadOrigin.isEmpty) &&
     expect.same(Some(future), committedAhead.aheadOrigin) &&
     expect(committedAhead.releaseOrigin.isEmpty)
   }
