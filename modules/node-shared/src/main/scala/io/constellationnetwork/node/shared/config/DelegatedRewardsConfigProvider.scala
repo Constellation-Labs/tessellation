@@ -35,7 +35,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   // Fixed-emission metanomics: a flat 2% per year of the DAG outstanding in the ledger, split by metanomicsV2DistributionProgram.
   val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
   val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
-  val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_990_000L) // TODO: set the real activation epoch
+  val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_913_350L)
   val minRegistrationBalance: Amount = Amount(1_000_000_00000000L)
 
   private lazy val defaultConfig = getConfig()
