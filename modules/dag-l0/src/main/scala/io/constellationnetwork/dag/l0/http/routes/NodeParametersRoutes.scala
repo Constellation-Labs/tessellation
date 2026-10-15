@@ -11,6 +11,7 @@ import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.node.{NodeStorage, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -39,7 +40,8 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   cluster: Cluster[F],
-  validator: UpdateNodeParametersValidator[F]
+  validator: UpdateNodeParametersValidator[F],
+  delegatedRewardsDistributor: DelegatedRewardsDistributor[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -73,13 +75,17 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
       peerIdToNodeParams <- getAllLatestNodeParameters(snapshotWithInfo)
       peerIdToPeerInfo <- cluster.info.map(_.toList.map(peerInfo => peerInfo.id -> peerInfo).toMap)
       peerIdToStake <- activeDelegatedStakesAndAddressesWithDefault(snapshotWithInfo)
+      // once the fixed commission is active, show the commission actually applied rather than the one the operator signed
+      fixedCommission <- delegatedRewardsDistributor.getDistributionProgram(snapshotWithInfo._1.epochProgress).map(_.fixedCommission)
       peerIdToNodeParameters <- peerIdToNodeParams.map {
         case (peerId, nodeParams) =>
           val (totalAmount, totalAddresses) = peerIdToStake(peerId)
           NodeParametersInfo(
             peerId = peerId,
             node = peerIdToPeerInfo.get(peerId),
-            delegatedStakeRewardParameters = nodeParams.latest.delegatedStakeRewardParameters,
+            delegatedStakeRewardParameters = fixedCommission.fold(nodeParams.latest.delegatedStakeRewardParameters) { c =>
+              DelegatedStakeRewardParameters(RewardFraction.unsafeFrom((c.toBigDecimal * 100_000_000).toInt))
+            },
             nodeMetadataParameters = nodeParams.latest.nodeMetadataParameters,
             totalAmountDelegated = totalAmount,
             totalAddressesAssigned = totalAddresses
@@ -187,10 +193,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateNodeParameters]]
-            result <- validator.validate(signed, info)
+            result <- validator.validate(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted node parameters from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

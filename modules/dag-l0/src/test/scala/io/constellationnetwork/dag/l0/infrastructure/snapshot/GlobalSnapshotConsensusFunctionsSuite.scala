@@ -251,13 +251,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {
     val updateNodeParametersValidator =
-      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000), PosInt(140), None)
+      UpdateNodeParametersValidator.make(
+        signedValidator,
+        RewardFraction(5_000_000),
+        RewardFraction(10_000_000),
+        PosInt(140),
+        None,
+        (_: EpochProgress) => false
+      )
     UpdateNodeParametersAcceptanceManager.make(updateNodeParametersValidator)
   }
 
   def updateDelegatedStakeAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
     val validator =
-      UpdateDelegatedStakeValidator.make(signedValidator, None)
+      UpdateDelegatedStakeValidator.make(signedValidator, None, (_: EpochProgress) => false)
     UpdateDelegatedStakeAcceptanceManager.make(validator)
   }
 
@@ -303,6 +310,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
   val delegatorRewards: DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
+    def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig] =
+      ProgramsDistributionConfig(Map.empty, NonNegFraction.one, NonNegFraction.one).pure[F]
+
     def calculateVariableInflation(
       epochProgress: EpochProgress,
       lastSnapshotContext: GlobalSnapshotContext

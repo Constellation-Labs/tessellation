@@ -8,8 +8,12 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{RewardFraction, UpdateNodeParameters, UpdateNodeParametersReference}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -26,7 +30,8 @@ trait UpdateNodeParametersValidator[F[_]] {
 
   def validate(
     signed: Signed[UpdateNodeParameters],
-    lastSnapshotContext: GlobalSnapshotInfo
+    lastSnapshotContext: GlobalSnapshotInfo,
+    epochProgress: EpochProgress
   ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]]
 
 }
@@ -38,12 +43,14 @@ object UpdateNodeParametersValidator {
     minRewardValue: RewardFraction,
     maxRewardValue: RewardFraction,
     maxMetadataFieldsChars: PosInt,
-    seedList: Option[Set[SeedlistEntry]]
+    seedList: Option[Set[SeedlistEntry]],
+    metanomicsV2Active: EpochProgress => Boolean
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
       override def validate(
         signed: Signed[UpdateNodeParameters],
-        lastSnapshotContext: GlobalSnapshotInfo
+        lastSnapshotContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
         for {
           signaturesV <- signedValidator
@@ -54,7 +61,7 @@ object UpdateNodeParametersValidator {
             .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
           rewardFractionV = validateRewardFraction(signed)
-          nodeV = validateNode(signed)
+          nodeV = validateNode(signed, lastSnapshotContext, epochProgress)
           nodeMetadataParamsV = validateNodeMetadataParams(signed, maxMetadataFieldsChars.value)
         } yield
           signaturesV
@@ -65,11 +72,19 @@ object UpdateNodeParametersValidator {
             .productR(nodeMetadataParamsV)
 
       private def validateNode(
-        signed: Signed[UpdateNodeParameters]
+        signed: Signed[UpdateNodeParameters],
+        lastSnapshotContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = {
         val nodeIds = signed.proofs.map(_.id).map(PeerId.fromId).toList
 
         nodeIds match {
+          // registration is open to any node whose address holds the minimum balance; seedlist membership no longer matters
+          case _ :: Nil if metanomicsV2Active(epochProgress) =>
+            val balance = lastSnapshotContext.balances.getOrElse(signed.source, Balance.empty)
+            val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+            if (balance.satisfiesCollateral(minimum)) signed.validNec[UpdateNodeParametersValidationError]
+            else InsufficientRegistrationBalance(signed.source, balance, minimum).invalidNec[Signed[UpdateNodeParameters]]
           case nodeId :: Nil =>
             if (seedList.forall(_.exists(_.peerId === nodeId)))
               signed.validNec[UpdateNodeParametersValidationError]
@@ -151,6 +166,7 @@ object UpdateNodeParametersValidator {
   case class InvalidParent(parent: UpdateNodeParametersReference) extends UpdateNodeParametersValidationError
   case class InvalidProofsCount(proofCount: Int) extends UpdateNodeParametersValidationError
   case class NodeNotInSeedList(nodeId: PeerId) extends UpdateNodeParametersValidationError
+  case class InsufficientRegistrationBalance(source: Address, balance: Balance, minimum: Amount) extends UpdateNodeParametersValidationError
   case class TooLargeName(name: String, maxChars: Int) extends UpdateNodeParametersValidationError
   case class TooLargeDescription(description: String, maxChars: Int) extends UpdateNodeParametersValidationError
 

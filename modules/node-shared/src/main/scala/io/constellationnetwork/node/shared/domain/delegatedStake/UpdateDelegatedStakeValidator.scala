@@ -8,9 +8,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -31,7 +33,8 @@ import eu.timepit.refined.internal.Adjacent.integralAdjacent
 trait UpdateDelegatedStakeValidator[F[_]] {
   def validateCreateDelegatedStake(
     signed: Signed[UpdateDelegatedStake.Create],
-    lastContext: GlobalSnapshotInfo
+    lastContext: GlobalSnapshotInfo,
+    epochProgress: EpochProgress
   ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]]
 
   def validateWithdrawDelegatedStake(
@@ -41,15 +44,34 @@ trait UpdateDelegatedStakeValidator[F[_]] {
 }
 
 object UpdateDelegatedStakeValidator {
+  // After the gate the node being delegated to must still hold the registration balance, so an operator cannot
+  // register, move the 1M DAG out, and keep collecting delegations.
+  private def validateNodeBalance(
+    signed: Signed[UpdateDelegatedStake.Create],
+    lastContext: GlobalSnapshotInfo,
+    nodeSource: Option[Address],
+    epochProgress: EpochProgress,
+    metanomicsV2Active: EpochProgress => Boolean
+  ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
+    if (!metanomicsV2Active(epochProgress)) signed.validNec
+    else {
+      val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+      val balance = nodeSource.flatMap(lastContext.balances.get).getOrElse(Balance.empty)
+      if (balance.satisfiesCollateral(minimum)) signed.validNec
+      else NodeBelowRegistrationBalance(signed.nodeId, balance, minimum).invalidNec
+    }
+
   def make[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    metanomicsV2Active: EpochProgress => Boolean
   )(implicit hasher: Hasher[F]): UpdateDelegatedStakeValidator[F] =
     new UpdateDelegatedStakeValidator[F] {
 
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: GlobalSnapshotInfo
+        lastContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           numberOfSignaturesV <- validateNumberOfSignatures(signed)
@@ -59,8 +81,8 @@ object UpdateDelegatedStakeValidator {
           isSignedExclusivelyBySource <- signedValidator
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
-          authorizedNodeIdV = validateAuthorizedNodeId(signed)
-          nodeIdV = validateNodeId(signed, lastContext)
+          authorizedNodeIdV = validateAuthorizedNodeId(signed, epochProgress)
+          nodeIdV = validateNodeId(signed, lastContext, epochProgress)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
           pendingWithdrawalV = validatePendingWithdrawal(signed, lastContext)
@@ -123,9 +145,11 @@ object UpdateDelegatedStakeValidator {
           }
 
       private def validateAuthorizedNodeId(
-        signed: Signed[UpdateDelegatedStake.Create]
+        signed: Signed[UpdateDelegatedStake.Create],
+        epochProgress: EpochProgress
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
+        // after the gate any registered node can receive delegations; validateNodeId still requires its node parameters
+        if (metanomicsV2Active(epochProgress) || seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
           signed.validNec
         } else {
           UnauthorizedNode(signed.nodeId).invalidNec
@@ -133,7 +157,8 @@ object UpdateDelegatedStakeValidator {
 
       private def validateNodeId(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: GlobalSnapshotInfo
+        lastContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
         val activeDelegatedStakes = lastContext.activeDelegatedStakes
           .getOrElse(SortedMap.empty[Address, List[DelegatedStakeRecord]])
@@ -147,7 +172,7 @@ object UpdateDelegatedStakeValidator {
         } else if (nodeIdParams.isEmpty) {
           NodeIdParamsNotFilled(signed.nodeId).invalidNec
         } else {
-          signed.validNec
+          validateNodeBalance(signed, lastContext, nodeIdParams.map(_._1.source), epochProgress, metanomicsV2Active)
         }
       }
 
@@ -288,6 +313,7 @@ object UpdateDelegatedStakeValidator {
   case class DuplicatedParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
 
   case class NodeIdParamsNotFilled(nodeId: PeerId) extends UpdateDelegatedStakeValidationError
+  case class NodeBelowRegistrationBalance(nodeId: PeerId, balance: Balance, minimum: Amount) extends UpdateDelegatedStakeValidationError
 
   type UpdateDelegatedStakeValidationErrorOr[A] = ValidatedNec[UpdateDelegatedStakeValidationError, A]
 }
