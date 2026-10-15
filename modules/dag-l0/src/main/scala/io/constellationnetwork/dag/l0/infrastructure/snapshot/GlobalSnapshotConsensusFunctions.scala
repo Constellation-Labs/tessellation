@@ -107,9 +107,8 @@ object GlobalSnapshotConsensusFunctions {
 
     /** Validates a leader's proposed artifact by independently reconstructing it from the same inputs.
       *
-      * Called by followers when their locally-built artifact hash differs from the leader's proposal. Re-derives the consensus trigger from
-      * `artifact.epochProgress` (not the local trigger) to prevent trigger-divergence false mismatches. If the reconstructed artifact
-      * equals the leader's, returns Right with the validated artifact and context; otherwise returns Left with the mismatch.
+      * Called by followers with the authorized proposal trigger. Rejects inconsistent epochProgress before reconstruction. If the
+      * reconstructed artifact equals the leader's, returns Right with the validated artifact and context; otherwise returns Left.
       *
       * '''Side effect''': Calls `createProposalArtifact` which mutates the shared MptStore. The caller must take a savepoint before calling
       * and restore on failure to prevent partial state leaking.
@@ -152,22 +151,12 @@ object GlobalSnapshotConsensusFunctions {
       val events: Set[GlobalSnapshotEvent] =
         dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents ++ tokenLockEvents ++ cdsEvents ++ wdsEvents ++ cncEvents ++ wncEvents
 
-      // Derive the consensus trigger from the artifact itself rather than trusting the local
-      // consensus trigger, which may differ across nodes (e.g. a node observing EventTrigger
-      // while the leader used TimeTrigger). An incremented epochProgress unambiguously means
-      // TimeTrigger was used; otherwise it was EventTrigger.
-      val artifactTrigger: ConsensusTrigger =
-        if (artifact.epochProgress.value.value > lastSignedArtifact.epochProgress.value.value)
-          TimeTrigger
-        else
-          EventTrigger
-
       def usingJson = createProposalArtifact(
         lastSignedArtifact.ordinal,
         lastSignedArtifact,
         lastContext,
         Hasher.forJson[F],
-        artifactTrigger,
+        trigger,
         events,
         facilitators,
         getGlobalSnapshotByOrdinal,
@@ -184,7 +173,9 @@ object GlobalSnapshotConsensusFunctions {
               GlobalArtifactMismatch(artifact, recreatedArtifact).asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
         }
 
-      check(usingJson)
+      GlobalSnapshotTriggerValidation.whenValid(lastSignedArtifact.epochProgress, trigger, artifact.epochProgress)(error =>
+        (error: InvalidArtifact).asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)].pure[F]
+      )(check(usingJson))
     }
 
     /** Builds a new GlobalIncrementalSnapshot proposal from the previous snapshot and pending events.

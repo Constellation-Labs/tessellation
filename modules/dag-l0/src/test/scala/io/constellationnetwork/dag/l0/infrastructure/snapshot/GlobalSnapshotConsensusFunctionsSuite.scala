@@ -45,7 +45,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -488,6 +488,72 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       actual = result.map(_._1.stateChannelSnapshots(scEvent.value.address))
       expectation = expect.same(true, result.isRight) && expect.same(expected, actual)
     } yield expectation
+  }
+
+  List[ConsensusTrigger](EventTrigger, TimeTrigger).foreach { builtTrigger =>
+    List[ConsensusTrigger](EventTrigger, TimeTrigger).foreach { authorizedTrigger =>
+      test(s"validateArtifact binds $builtTrigger artifact to $authorizedTrigger authority") { res =>
+        implicit val (_, j, h, sp, m) = res
+
+        for {
+          (gscf, facilitators, parent, genesis, scEvent) <- getTestData()
+          (artifact, _, _) <- gscf.createProposalArtifact(
+            SnapshotOrdinal.MinValue,
+            parent,
+            genesis.value.info.toGlobalSnapshotInfo,
+            h,
+            builtTrigger,
+            Set(scEvent),
+            facilitators,
+            _ => None.pure[IO]
+          )
+          result <- gscf.validateArtifact(
+            parent,
+            genesis.value.info.toGlobalSnapshotInfo,
+            authorizedTrigger,
+            artifact,
+            facilitators,
+            _ => None.pure[IO]
+          )
+        } yield
+          if (builtTrigger == authorizedTrigger)
+            expect(result.isRight, s"matching authority must accept the complete artifact: $result")
+          else
+            expect.same(
+              Left(
+                GlobalSnapshotTriggerValidation.EpochProgressMismatch(
+                  if (authorizedTrigger == TimeTrigger) parent.epochProgress.next else parent.epochProgress,
+                  artifact.epochProgress
+                )
+              ),
+              result
+            )
+      }
+    }
+  }
+
+  List(9L, 12L).foreach { invalidProgress =>
+    test(s"validateArtifact rejects epochProgress $invalidProgress from parent 10 before reconstruction") { res =>
+      implicit val (_, j, h, sp, m) = res
+
+      for {
+        (gscf, facilitators, parent, genesis, _) <- getTestData()
+        changedParent = parent.copy(value = parent.value.copy(epochProgress = EpochProgress(NonNegLong(10L))))
+        candidate = parent.value.copy(epochProgress = EpochProgress(NonNegLong.unsafeFrom(invalidProgress)))
+        result <- gscf.validateArtifact(
+          changedParent,
+          genesis.value.info.toGlobalSnapshotInfo,
+          TimeTrigger,
+          candidate,
+          facilitators,
+          _ => IO.raiseError(new AssertionError("invalid epochProgress reached reconstruction"))
+        )
+      } yield
+        expect.same(
+          Left(GlobalSnapshotTriggerValidation.EpochProgressMismatch(EpochProgress(NonNegLong(11L)), candidate.epochProgress)),
+          result
+        )
+    }
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
