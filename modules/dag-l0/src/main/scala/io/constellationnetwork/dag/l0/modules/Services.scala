@@ -20,8 +20,8 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.SharedConfig
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -34,7 +34,6 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
@@ -116,11 +115,7 @@ object Services {
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)
-      collateralService = Collateral.makeForGlobalSnapshots[F](
-        cfg.collateral,
-        storages.globalSnapshot.head.map(_.map { case (snapshot, info) => (snapshot.epochProgress, info.balances: Map[Address, Balance]) }),
-        DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(cfg.environment, DelegatedRewardsEra.Disabled)
-      )
+      collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](
           L0Cell.mkL0Cell(

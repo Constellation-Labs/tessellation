@@ -10,8 +10,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
-import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.{
+  DuplicatedParent,
+  DuplicatedStake,
+  InvalidParent
+}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidatorSuite.mkGlobalContext
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
@@ -29,7 +32,6 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
@@ -46,40 +48,11 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     sourceAddress <- kp.getPublic.toId.toAddress.asResource
   } yield (j, h, sp, kp, sourceAddress)
 
-  test("acceptance uses artifact epoch and ordinal for new-delegation membership") { res =>
-    implicit val (_, h, sp, kp, sourceAddress) = res
-    for {
-      (reference, context) <- UpdateDelegatedStakeValidatorSuite.mkValidGlobalContext(kp, kp)
-      create = UpdateDelegatedStakeValidatorSuite.testCreateDelegatedStake(kp, sourceAddress, reference)
-      signed <- Signed.forAsyncHasher(create, kp)
-      era = DelegatedRewardsEra(
-        EpochProgress(100L),
-        SortedMap(SnapshotOrdinal.unsafeApply(9001L) -> SortedSet(create.nodeId))
-      )
-      validator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, era)
-      manager = UpdateDelegatedStakeAcceptanceManager.make[IO](validator)
-      before <- manager.accept(List(signed), Nil, context, EpochProgress(99L), SnapshotOrdinal.unsafeApply(9000L))
-      excluded <- manager.accept(List(signed), Nil, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(9000L))
-      included <- manager.accept(List(signed), Nil, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(9001L))
-    } yield
-      expect(
-        before.acceptedCreates == SortedMap(sourceAddress -> List(signed -> SnapshotOrdinal.unsafeApply(9000L))),
-        "the previous epoch keeps historical seedlist admission"
-      )
-        .and(expect.same(List(signed -> NonEmptyChain.of(UnauthorizedNode(create.nodeId))), excluded.notAcceptedCreates))
-        .and(
-          expect(
-            included.acceptedCreates == SortedMap(sourceAddress -> List(signed -> SnapshotOrdinal.unsafeApply(9001L))),
-            "membership takes effect at its artifact ordinal"
-          )
-        )
-  }
-
   test("should reject stakes with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager.make[IO](
-        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, DelegatedRewardsEra.Disabled)
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
       )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -121,7 +94,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager.make[IO](
-        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, DelegatedRewardsEra.Disabled)
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
       )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -163,7 +136,7 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
       UpdateDelegatedStakeAcceptanceManager.make[IO](
-        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, DelegatedRewardsEra.Disabled)
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
       )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]

@@ -49,6 +49,8 @@ trait DelegatedRewardsDistributor[F[_]] {
 
   def getEmissionConfig(epochProgress: EpochProgress): F[EmissionConfigEntry]
 
+  def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig]
+
   def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount]
 
   def distribute(
@@ -57,8 +59,7 @@ trait DelegatedRewardsDistributor[F[_]] {
     epochProgress: EpochProgress,
     facilitators: List[(Address, PeerId)],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-    partitionedRecords: PartitionedStakeUpdates,
-    ordinal: SnapshotOrdinal
+    partitionedRecords: PartitionedStakeUpdates
   ): F[DelegatedRewardsResult]
 }
 

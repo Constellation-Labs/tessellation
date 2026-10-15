@@ -12,7 +12,9 @@ object CurrentDagSupply {
       extends RuntimeException(s"Current DAG supply exceeds the supported amount range: $total")
       with NoStackTrace
 
-  // Delegation and collateral principal refer to token locks; currency projections are not native DAG.
+  // Outstanding native DAG in the ledger: spendable balances, token-lock principal (which is where delegated stake
+  // and node collateral live), native allow-spend escrow, and accrued delegation rewards not yet paid out.
+  // Metagraph currencies and the mirrored token-lock balance projections are not DAG.
   def calculate(info: GlobalSnapshotInfo): Either[SupplyOverflow, Amount] = {
     val balances = info.balances.values.foldLeft(BigInt(0))((total, balance) => total + balance.value.value)
     val locks = info.activeTokenLocks.fold(BigInt(0))(_.values.foldLeft(BigInt(0)) { (total, records) =>

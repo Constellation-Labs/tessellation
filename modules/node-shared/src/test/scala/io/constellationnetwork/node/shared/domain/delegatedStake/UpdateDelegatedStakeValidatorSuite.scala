@@ -14,7 +14,7 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -36,7 +36,6 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
@@ -136,7 +135,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(Valid(signed), result)
   }
 
@@ -156,7 +155,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       )
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield
       expect.all(result match {
         case Invalid(errors) =>
@@ -185,7 +184,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed = signed1.addProof(signed2.proofs.head)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
-      result <- validator.validateCreateDelegatedStake(signed, lastContext1, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext1, legacyEpoch)
     } yield
       expect.all(result match {
         case Invalid(errors) =>
@@ -206,7 +205,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(Valid(signed), result)
   }
 
@@ -219,7 +218,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(invalidCreate, keyPair)
       seedlist <- mkSeedlist()
       validator = mkValidator(seedlist)
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(UnauthorizedNode(invalidCreate.nodeId).invalidNec, result)
   }
 
@@ -242,7 +241,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, context, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, context, legacyEpoch)
     } yield expect.same(StakeExistsForNode(validCreate.nodeId).invalidNec, result)
   }
 
@@ -267,7 +266,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, context, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, context, legacyEpoch)
     } yield expect.same(Valid(signed), result)
   }
 
@@ -299,7 +298,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, context, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, context, legacyEpoch)
     } yield expect.same(AlreadyWithdrawn(validCreate.parent.hash).invalidNec, result)
   }
 
@@ -323,7 +322,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, context, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, context, legacyEpoch)
     } yield expect.same(InvalidParent(validCreate.parent).invalidNec, result)
   }
 
@@ -346,7 +345,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, context, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, context, legacyEpoch)
     } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
   }
 
@@ -362,7 +361,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
   }
 
@@ -376,7 +375,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
   }
 
@@ -590,71 +589,8 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
-      result <- validator.validateCreateDelegatedStake(signed, lastContext, EpochProgress.MinValue, SnapshotOrdinal.MinValue)
+      result <- validator.validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
-  }
-
-  test("epoch activation replaces seedlist authorization and does not add a delegation minimum") { res =>
-    implicit val (json, h, sp, keyPair, sourceAddress) = res
-    for {
-      (tokenLockReference, context) <- mkValidGlobalContext(keyPair, keyPair, tokenLockAmount = 1L)
-      create = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference, amount = 1L)
-      signed <- forAsyncHasher(create, keyPair)
-      era = DelegatedRewardsEra(
-        EpochProgress(100L),
-        SortedMap(SnapshotOrdinal.MinValue -> SortedSet(create.nodeId))
-      )
-      validator = mkValidator(Some(Set.empty), era)
-      before <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(99L), SnapshotOrdinal.unsafeApply(9000L))
-      at <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(9001L))
-      after <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(101L), SnapshotOrdinal.unsafeApply(9002L))
-    } yield
-      expect
-        .same(UnauthorizedNode(create.nodeId).invalidNec, before)
-        .and(expect.same(Valid(signed), at))
-        .and(expect.same(Valid(signed), after))
-  }
-
-  test("scheduled operator exclusion rejects new delegations even when the node remains on the seedlist") { res =>
-    implicit val (json, h, sp, keyPair, sourceAddress) = res
-    for {
-      (tokenLockReference, context) <- mkValidGlobalContext(keyPair, keyPair)
-      create = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
-      signed <- forAsyncHasher(create, keyPair)
-      seedlist <- mkSeedlist(create.nodeId)
-      era = DelegatedRewardsEra(
-        EpochProgress(100L),
-        SortedMap(
-          SnapshotOrdinal.MinValue -> SortedSet(create.nodeId),
-          SnapshotOrdinal.unsafeApply(9000L) -> SortedSet.empty[PeerId]
-        )
-      )
-      validator = mkValidator(seedlist, era)
-      historical <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(99L), SnapshotOrdinal.unsafeApply(9000L))
-      member <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(8999L))
-      excluded <- validator.validateCreateDelegatedStake(signed, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(9000L))
-      missing = mkValidator(seedlist, era.copy(rewardValidators = SortedMap.empty))
-      missingResult <- missing.validateCreateDelegatedStake(signed, context, EpochProgress(100L), SnapshotOrdinal.unsafeApply(9000L))
-    } yield
-      expect
-        .same(Valid(signed), historical)
-        .and(expect.same(Valid(signed), member))
-        .and(expect.same(UnauthorizedNode(create.nodeId).invalidNec, excluded))
-        .and(expect.same(UnauthorizedNode(create.nodeId).invalidNec, missingResult))
-  }
-
-  test("excluded operators do not prevent existing delegators from withdrawing") { res =>
-    implicit val (json, h, sp, keyPair, sourceAddress) = res
-    for {
-      signedParent <- forAsyncHasher(testCreateDelegatedStake(keyPair, sourceAddress), keyPair)
-      context = mkGlobalContext(
-        SortedMap(sourceAddress -> SortedSet(DelegatedStakeRecord(signedParent, SnapshotOrdinal.MinValue, Balance.empty)))
-      )
-      reference <- DelegatedStakeReference.of(signedParent)
-      signed <- forAsyncHasher(testWithdrawDelegatedStake(keyPair, sourceAddress).copy(stakeRef = reference.hash), keyPair)
-      validator = mkValidator(Some(Set.empty), DelegatedRewardsEra(EpochProgress.MinValue, SortedMap.empty))
-      result <- validator.validateWithdrawDelegatedStake(signed, context)
-    } yield expect.same(Valid(signed), result)
   }
 
   private def mkSeedlist(peerIds: PeerId*)(implicit sp: SecurityProvider[IO]): IO[Option[Set[SeedlistEntry]]] =
@@ -663,7 +599,31 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       seedlistEntry = SeedlistEntry(PeerId.fromPublic(keyPair.getPublic), None, None, None, None)
     } yield Some(peerIds.map(SeedlistEntry(_, None, None, None, None)).toSet + seedlistEntry)
 
-  private def mkValidator(seedlist: Option[Set[SeedlistEntry]] = None, era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled)(
+  private val legacyEpoch = EpochProgress.MinValue
+
+  test("after the metanomics gate a delegation to a registered node outside the seedlist succeeds") { res =>
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      emptySeedlist = Some(Set.empty[SeedlistEntry])
+      minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+      // the node registered from keyPair, i.e. sourceAddress, so that is the wallet that must hold the 1M DAG
+      funded = lastContext.copy(balances = SortedMap(sourceAddress -> Balance(minimum.value)))
+      legacy <- mkValidator(emptySeedlist).validateCreateDelegatedStake(signed, funded, legacyEpoch)
+      active <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, funded, legacyEpoch)
+      // the node moved its 1M DAG out after registering: no new delegations
+      drained <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
+    } yield
+      expect
+        .same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy)
+        .and(expect.same(Valid(signed), active))
+        .and(expect.same(NodeBelowRegistrationBalance(validCreate.nodeId, Balance.empty, minimum).invalidNec, drained))
+  }
+
+  private def mkValidator(seedlist: Option[Set[SeedlistEntry]] = None, metanomicsV2Active: Boolean = false)(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
     H: Hasher[IO]
@@ -672,7 +632,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     UpdateDelegatedStakeValidator.make[IO](
       signedValidator,
       seedlist,
-      era
+      (_: EpochProgress) => metanomicsV2Active
     )
   }
 

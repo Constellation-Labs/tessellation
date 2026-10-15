@@ -10,8 +10,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -47,41 +47,6 @@ object GlobalDelegatedRewardsDistributor {
     // Define a high precision MathContext for consistent calculations
     private val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
     private val priceOracleEpoch: EpochProgress = delegatedRewardsConfig.priceOracleEpoch.getOrElse(environment, EpochProgress.MaxValue)
-    private val era = delegatedRewardsConfig.eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
-
-    override def distribute(
-      lastSnapshotContext: GlobalSnapshotInfo,
-      trigger: ConsensusTrigger,
-      epochProgress: EpochProgress,
-      facilitators: List[(Address, PeerId)],
-      delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
-      partitionedRecords: PartitionedStakeUpdates,
-      ordinal: SnapshotOrdinal
-    ): F[DelegatedRewardsResult] =
-      if (era.isActive(epochProgress)) {
-        for {
-          program <- getDistributionProgram(epochProgress)
-          budget <- trigger match {
-            case EventTrigger => Amount.empty.pure[F]
-            case TimeTrigger  => calculateVariableInflation(epochProgress, lastSnapshotContext)
-          }
-          oneTimeRewards <- trigger match {
-            case EventTrigger => List.empty[OneTimeReward].pure[F]
-            case TimeTrigger  => getOneTimeRewardsConfig.map(_.filter(_.epoch === epochProgress))
-          }
-          result <- NewEraDelegatedRewards.distribute[F](
-            lastSnapshotContext,
-            ordinal,
-            era,
-            budget,
-            facilitators,
-            delegatedStakeDiffs,
-            partitionedRecords,
-            oneTimeRewards,
-            program
-          )
-        } yield result
-      } else distributeLegacy(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
 
     /** Return emission configuration applied by this rewards distributor
       */
@@ -110,23 +75,15 @@ object GlobalDelegatedRewardsDistributor {
 
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
-    def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount] =
-      if (era.isActive(epochProgress))
-        CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F].map { supply =>
-          val rate = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate
-          val perEpoch = BigInt(supply.value.value) * rate.numerator.value / (BigInt(rate.denominator.value) * era.epochsPerYear.value)
-          Amount(NonNegLong.unsafeFrom(perEpoch.toLong))
-        }
-      else
-        for {
-          emConfig <- getEmissionConfig(epochProgress)
-          result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
-        } yield result
+    def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount] = for {
+      emConfig <- getEmissionConfig(epochProgress)
+      result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
+    } yield result
 
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
       * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
       */
-    private def distributeLegacy(
+    def distribute(
       lastSnapshotContext: GlobalSnapshotInfo,
       trigger: ConsensusTrigger,
       epochProgress: EpochProgress,
@@ -145,7 +102,8 @@ object GlobalDelegatedRewardsDistributor {
             List.empty,
             List.empty,
             BigDecimal(0L, mc),
-            BigDecimal(0L, mc)
+            BigDecimal(0L, mc),
+            None
           )
         case TimeTrigger =>
           for {
@@ -168,7 +126,8 @@ object GlobalDelegatedRewardsDistributor {
               reservedRewards,
               oneTimeRewards,
               facilitatorRewardPool,
-              delegatorRewardPool
+              delegatorRewardPool,
+              pctConfig.fixedCommission
             )
           } yield result
       }
@@ -188,7 +147,7 @@ object GlobalDelegatedRewardsDistributor {
         val delegatorsWeight = pctConfig.delegatorsWeight.toBigDecimal
         val totalWeight = reservedWeight + validatorsWeight + delegatorsWeight
 
-        val annualFlatInflationRate = delegatedRewardsConfig.flatInflationRate.toBigDecimal
+        val annualFlatInflationRate = pctConfig.flatInflationRate.getOrElse(delegatedRewardsConfig.flatInflationRate).toBigDecimal
 
         val reservedPercentage = reservedWeight / totalWeight
         val validatorsPercentage = validatorsWeight / totalWeight
@@ -239,7 +198,6 @@ object GlobalDelegatedRewardsDistributor {
       val iImpact = emConfig.iImpact.toBigDecimal
       val epochsPerYear = BigDecimal(emConfig.epochsPerYear.value, mc)
       val transitionEpoch = BigDecimal(emConfig.asOfEpoch.value.value, mc)
-      val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
 
       if (emConfig.dagPrices.values.isEmpty) {
         Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount.empty)
@@ -251,6 +209,10 @@ object GlobalDelegatedRewardsDistributor {
         val yearDiff = DecimalUtils.safeDivide(BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc), epochsPerYear)
 
         for {
+          totalSupplyAmount <-
+            if (emConfig.ledgerSupply) CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F] else emConfig.totalSupply.pure[F]
+          totalSupply = BigDecimal(totalSupplyAmount.value.value, mc)
+
           // Current year
           currentYearFraction <- yearDiff.pure[F]
 
@@ -327,7 +289,8 @@ object GlobalDelegatedRewardsDistributor {
       activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
-      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+      fixedCommission: Option[NonNegFraction]
     ): F[Map[PeerId, Map[Address, Amount]]] =
       if (totalDelegationRewardPool === BigDecimal(0.0)) Map.empty[PeerId, Map[Address, Amount]].pure[F]
       else {
@@ -362,7 +325,9 @@ object GlobalDelegatedRewardsDistributor {
 
                     // Convert from RewardFraction (0-100M) to BigDecimal percentage (0-1)
                     // RewardFraction is operator cut, so delegators get (1 - operatorFraction)
-                    operatorFraction = BigDecimal(nodeRewardParams.rewardFraction, mc) / BigDecimal(100_000_000, mc)
+                    operatorFraction = fixedCommission
+                      .map(_.toBigDecimal)
+                      .getOrElse(BigDecimal(nodeRewardParams.rewardFraction, mc) / BigDecimal(100_000_000, mc))
                     delegatorRewardPercentage = BigDecimal(1, mc) - operatorFraction
 
                     _ <-
@@ -403,7 +368,8 @@ object GlobalDelegatedRewardsDistributor {
       facilitatorRewardPool: BigDecimal,
       delegatorRewardPool: BigDecimal,
       lastSnapshotContext: GlobalSnapshotInfo,
-      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]] = SortedMap.empty
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+      fixedCommission: Option[NonNegFraction]
     ): F[SortedSet[RewardTransaction]] = {
 
       val staticRewardsF = {
@@ -455,8 +421,9 @@ object GlobalDelegatedRewardsDistributor {
                 nodeParametersMap.get(nodeId.toId).flatMap {
                   case (params, _) =>
                     // RewardFraction is stored as a value from 0 to 100,000,000 representing 0% to 100%
-                    val operatorCommission = BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) /
-                      BigDecimal(100_000_000, mc)
+                    val operatorCommission = fixedCommission
+                      .map(_.toBigDecimal)
+                      .getOrElse(BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) / BigDecimal(100_000_000, mc))
 
                     val stakeRatio = stakeAmount / totalFacilitatorStake
                     val dynamicRewardBD = delegatorRewardPool * stakeRatio * operatorCommission
@@ -471,7 +438,10 @@ object GlobalDelegatedRewardsDistributor {
               }
           }.sequence
 
-          allRewards = SortedSet.from(staticRewards ++ dynamicRewards)
+          // Under a fixed commission a validator's static reward and its commission can be equal; a SortedSet would drop one.
+          allRewards <-
+            if (fixedCommission.isDefined) RewardTransactionAggregation.combine(staticRewards ++ dynamicRewards).liftTo[F]
+            else SortedSet.from(staticRewards ++ dynamicRewards).pure[F]
         } yield allRewards
       }
     }
@@ -509,7 +479,8 @@ object GlobalDelegatedRewardsDistributor {
       reservedRewardDistribution: List[(Address, BigDecimal)],
       oneTimeRewards: List[OneTimeReward],
       facilitatorRewardPool: BigDecimal,
-      delegatorRewardPool: BigDecimal
+      delegatorRewardPool: BigDecimal,
+      fixedCommission: Option[NonNegFraction]
     ): F[DelegatedRewardsResult] =
       for {
         delegatorRewardsMap <-
@@ -517,7 +488,8 @@ object GlobalDelegatedRewardsDistributor {
             lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
             lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
             delegatorRewardPool,
-            delegatedStakeDiffs.acceptedCreates
+            delegatedStakeDiffs.acceptedCreates,
+            fixedCommission
           ).map(_.toSortedMap)
 
         nodeOperatorRewards <-
@@ -527,7 +499,8 @@ object GlobalDelegatedRewardsDistributor {
             facilitatorRewardPool,
             delegatorRewardPool,
             lastSnapshotContext,
-            delegatedStakeDiffs.acceptedCreates
+            delegatedStakeDiffs.acceptedCreates,
+            fixedCommission
           )
         oneTimeRewardsTxs = SortedSet.from(oneTimeRewards.map(otr => RewardTransaction(otr.address, otr.amount)))
         nodeOperatorRewardsTxs = nodeOperatorRewards ++ oneTimeRewardsTxs

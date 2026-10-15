@@ -14,7 +14,6 @@ import io.constellationnetwork.dag.l1.domain.tokenlock.block.TokenLockBlockServi
 import io.constellationnetwork.dag.l1.domain.transaction.{TransactionFeeEstimator, TransactionService}
 import io.constellationnetwork.dag.l1.modules.{Services => BaseServices, Validators}
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -60,8 +59,7 @@ object Services {
         storages.transaction,
         lastGlobalSnapshotStorage,
         cfg.collateral.amount,
-        txHasher,
-        DelegatedRewardsEra.Disabled
+        txHasher
       )
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
@@ -85,8 +83,7 @@ object Services {
         storages.allowSpendBlock,
         storages.allowSpend,
         cfg.collateral.amount,
-        storages.lastSnapshot,
-        DelegatedRewardsEra.Disabled
+        storages.lastSnapshot
       )
       val tokenLock = TokenLockService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.tokenLock,
@@ -99,8 +96,7 @@ object Services {
         storages.tokenLockBlock,
         storages.tokenLock,
         cfg.collateral.amount,
-        storages.lastSnapshot,
-        DelegatedRewardsEra.Disabled
+        storages.lastSnapshot
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication

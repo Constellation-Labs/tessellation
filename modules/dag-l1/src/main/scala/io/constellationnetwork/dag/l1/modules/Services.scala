@@ -3,7 +3,6 @@ package io.constellationnetwork.dag.l1.modules
 import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
-import cats.syntax.functor._
 
 import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.block.BlockService
@@ -12,7 +11,6 @@ import io.constellationnetwork.dag.l1.domain.tokenlock.block.TokenLockBlockServi
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
@@ -28,8 +26,6 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.modules.SharedServices
-import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -55,8 +51,6 @@ object Services {
     txHasher: Hasher[F]
   ): Services[F, P, S, SI, R] =
     new Services[F, P, S, SI, R] {
-      private val rewardsEra =
-        DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(cfg.environment, DelegatedRewardsEra.Disabled)
       val localHealthcheck = sharedServices.localHealthcheck
       val block = BlockService.make[F](
         BlockAcceptanceManager.make[F](validators.block, txHasher),
@@ -65,8 +59,7 @@ object Services {
         storages.transaction,
         lastGlobalSnapshotStorage,
         cfg.collateral.amount,
-        txHasher,
-        rewardsEra
+        txHasher
       )
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
@@ -82,8 +75,7 @@ object Services {
         storages.allowSpendBlock,
         storages.allowSpend,
         cfg.collateral.amount,
-        storages.lastSnapshot,
-        rewardsEra
+        storages.lastSnapshot
       )
       val tokenLock =
         TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
@@ -93,16 +85,9 @@ object Services {
         storages.tokenLockBlock,
         storages.tokenLock,
         cfg.collateral.amount,
-        storages.lastSnapshot,
-        rewardsEra
+        storages.lastSnapshot
       )
-      val collateral = Collateral.makeForGlobalSnapshots[F](
-        cfg.collateral,
-        lastGlobalSnapshotStorage.getCombined.map(_.map {
-          case (snapshot, info) => (snapshot.epochProgress, info.balances: Map[Address, Balance])
-        }),
-        rewardsEra
-      )
+      val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val restart = sharedServices.restart
     }
 }

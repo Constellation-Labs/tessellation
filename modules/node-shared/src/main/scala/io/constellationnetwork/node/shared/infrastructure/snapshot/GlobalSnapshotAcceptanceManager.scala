@@ -14,7 +14,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -181,8 +181,7 @@ object GlobalSnapshotAcceptanceManager {
     pricingUpdateValidator: PricingUpdateValidator[F],
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
-    withdrawalTimeLimit: EpochProgress,
-    rewardsEra: DelegatedRewardsEra
+    withdrawalTimeLimit: EpochProgress
   ) = new GlobalSnapshotAcceptanceManager[F] {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -250,14 +249,7 @@ object GlobalSnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
       for {
-        acceptanceResult <- acceptBlocks(
-          blocksForAcceptance,
-          lastSnapshotContext,
-          lastActiveTips,
-          lastDeprecatedTips,
-          ordinal,
-          epochProgress
-        )
+        acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
           cdsEvents,
           wdsEvents,
@@ -339,16 +331,20 @@ object GlobalSnapshotAcceptanceManager {
             )
           }
 
-        rewardsToAccept <-
-          if (rewardsEra.isActive(epochProgress))
+        (updatedBalancesByRewards, acceptedRewardTxs) <- Async[F].fromEither(
+          if (DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epochProgress))
             RewardTransactionAggregation
               .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
-              .liftTo[F]
-          else (withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards).pure[F]
-        (updatedBalancesByRewards, acceptedRewardTxs) <-
-          if (rewardsEra.isActive(epochProgress))
-            RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).liftTo[F]
-          else acceptRewardTxs(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).pure[F]
+              .leftWiden[Throwable]
+              .flatMap(RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, _))
+          else
+            Right(
+              acceptRewardTxs(
+                updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+              )
+            )
+        )
 
         currencyBalances = currencySnapshots.toList.map {
           case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
@@ -1147,15 +1143,14 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      ordinal: SnapshotOrdinal,
-      epochProgress: EpochProgress
+      ordinal: SnapshotOrdinal
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
         tipUsages,
-        rewardsEra.collateralAt(epochProgress, collateral),
+        collateral,
         TransactionReference.empty
       )
 
@@ -1173,7 +1168,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastAllowSpendRefs.getOrElse(Map.empty),
-        rewardsEra.collateralAt(epochProgress, collateral),
+        collateral,
         AllowSpendReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
@@ -1207,7 +1202,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTokenLockRefs.getOrElse(Map.empty),
-        rewardsEra.collateralAt(epochProgress, collateral),
+        collateral,
         TokenLockReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {

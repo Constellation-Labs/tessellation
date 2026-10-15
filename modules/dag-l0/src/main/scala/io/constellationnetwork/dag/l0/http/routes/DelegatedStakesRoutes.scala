@@ -9,10 +9,8 @@ import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, EmissionConfigEntry}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
@@ -52,8 +50,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
-  delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
-  era: DelegatedRewardsEra
+  delegatedRewardsDistributor: DelegatedRewardsDistributor[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -173,22 +170,21 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     for {
       emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
 
+      fixedCommission <- delegatedRewardsDistributor.getDistributionProgram(lastSnapshot.epochProgress).map(_.fixedCommission)
       (_, _, totalDelegateStake, legacyTotalSupply) <- processDelegations(lastSnapshotInfo)
       currentTotalSupply <-
-        if (era.isActive(lastSnapshot.epochProgress)) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F]
-        else legacyTotalSupply.pure[F]
-      epochsPerYear = if (era.isActive(lastSnapshot.epochProgress)) era.epochsPerYear else emissionConfig.epochsPerYear
-      latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
+        if (emissionConfig.ledgerSupply) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F] else legacyTotalSupply.pure[F]
+      latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo, fixedCommission)
 
       currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
       nextPrice <- getNextDagPrice(lastSnapshotInfo)
 
       avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
-      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, epochsPerYear)
+      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
 
     } yield
       RewardsInfo(
-        epochsPerYear = epochsPerYear,
+        epochsPerYear = emissionConfig.epochsPerYear,
         currentDagPrice = currentPrice,
         nextDagPrice = nextPrice,
         totalDelegatedAmount = totalDelegateStake,
@@ -223,7 +219,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     ).mapN(Tuple4.apply)
   }
 
-  private def getLatestDelegateRewardTotal(snapshot: GlobalIncrementalSnapshot, info: GlobalSnapshotInfo): F[Amount] = {
+  private def getLatestDelegateRewardTotal(
+    snapshot: GlobalIncrementalSnapshot,
+    info: GlobalSnapshotInfo,
+    fixedCommission: Option[NonNegFraction]
+  ): F[Amount] = {
     val delegateRewards = snapshot.delegateRewards
       .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]])
 
@@ -232,8 +232,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
       case (acc, (peerId, rewards)) =>
-        val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
-        val nodeCommission = BigDecimal(nodeCommissionValue)
+        val nodeCommission = fixedCommission.map(_.toBigDecimal).getOrElse {
+          BigDecimal(nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0))
+        }
 
         val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
 
@@ -247,18 +248,10 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             .longValue
     }
 
-    if (era.isActive(snapshot.epochProgress)) {
-      val netRewards = delegateRewards.valuesIterator.flatMap(_.valuesIterator).map(a => BigInt(a.value.value)).sum
-      val estimatedGross = (netRewards * 10 + 4) / 9
-      Either
-        .cond(estimatedGross.isValidLong, estimatedGross.toLong, new IllegalArgumentException("Gross reward estimate exceeds amount range"))
-        .liftTo[F]
-        .flatMap(toAmount)
-    } else
-      delegateRewards
-        .foldLeft(0L)(calcFullReward)
-        .pure[F]
-        .flatMap(toAmount)
+    delegateRewards
+      .foldLeft(0L)(calcFullReward)
+      .pure[F]
+      .flatMap(toAmount)
   }
 
   private def calculateAverageReward(latestRewards: Amount, totalStakedAmount: Amount): F[Amount] =
@@ -326,7 +319,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
         case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateDelegatedStake.Create]]
-            result <- validator.validateCreateDelegatedStake(signed, info, snapshot.epochProgress, snapshot.ordinal.next)
+            result <- validator.validateCreateDelegatedStake(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted create delegated stake from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

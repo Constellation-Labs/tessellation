@@ -10,10 +10,8 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
@@ -24,7 +22,7 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.PosInt
 import weaver.MutableIOSuite
 
 object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
@@ -47,7 +45,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       peerId = PeerId.fromId(keyPair.getPublic.toId)
       signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
       signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
-      acceptanceManager = mkAcceptanceManager(Set(peerId), DelegatedRewardsEra.Disabled)
+      acceptanceManager = mkAcceptanceManager(Set(peerId))
       acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(
         signedInvalidList ++ signedValidList,
         mkGlobalContext(),
@@ -57,37 +55,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }
 
-  test("acceptance and historical replay use the supplied artifact epoch and preserve signed registrations") { res =>
-    implicit val (json, h, sp) = res
-    val activation = EpochProgress(NonNegLong(100L))
-    val era = DelegatedRewardsEra(activation, SortedMap.empty)
-    for {
-      keyPair <- KeyPairGenerator.makeKeyPair[IO]
-      source = keyPair.getPublic.toAddress
-      peerId = PeerId.fromId(keyPair.getPublic.toId)
-      // Codec-valid 0% was rejected by historical range validation, but must remain signed as submitted at A.
-      signed <- forAsyncHasher(invalidTestUpdateNodeParameters1(source), keyPair)
-      historical <- forAsyncHasher(validTestUpdateNodeParameters1(source), keyPair)
-      context = mkGlobalContext().copy(balances = SortedMap(source -> Balance(DelegatedRewardsEra.MinimumRegistrationBalance.value)))
-      manager = mkAcceptanceManager(Set(peerId), era)
-      before <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(99L)))
-      at <- manager.acceptUpdateNodeParameters(List(signed, historical), context, activation)
-      after <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(101L)))
-      replay <- manager.acceptUpdateNodeParameters(List(signed, historical), context, EpochProgress(NonNegLong(99L)))
-      inputHash <- h.hash(List(historical, signed))
-      acceptedHash <- h.hash(at.accepted)
-    } yield
-      expect
-        .same(List(historical), before.accepted)
-        .and(expect.same(List(signed), before.notAccepted.map(_._1)))
-        .and(expect.same(List(historical, signed), at.accepted))
-        .and(expect.same(List.empty, at.notAccepted))
-        .and(expect.same(at, after))
-        .and(expect.same(before, replay))
-        .and(expect.same(inputHash, acceptedHash))
-  }
-
-  private def mkAcceptanceManager(peersList: Set[PeerId], era: DelegatedRewardsEra)(
+  private def mkAcceptanceManager(peersList: Set[PeerId])(
     implicit S: SecurityProvider[IO],
     J: JsonSerializer[IO],
     H: Hasher[IO]
@@ -100,7 +68,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       RewardFraction(10_000_000),
       PosInt(140),
       seedList.some,
-      era
+      _ => false
     )
     UpdateNodeParametersAcceptanceManager.make[IO](updateNodeParametersValidator)
   }

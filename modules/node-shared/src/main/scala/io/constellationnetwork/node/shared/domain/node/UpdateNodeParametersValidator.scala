@@ -8,7 +8,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -44,7 +44,7 @@ object UpdateNodeParametersValidator {
     maxRewardValue: RewardFraction,
     maxMetadataFieldsChars: PosInt,
     seedList: Option[Set[SeedlistEntry]],
-    era: DelegatedRewardsEra
+    metanomicsV2Active: EpochProgress => Boolean
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
       override def validate(
@@ -60,9 +60,7 @@ object UpdateNodeParametersValidator {
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
-          rewardFractionV =
-            if (era.isActive(epochProgress)) signed.validNec[UpdateNodeParametersValidationError]
-            else validateRewardFraction(signed)
+          rewardFractionV = validateRewardFraction(signed)
           nodeV = validateNode(signed, lastSnapshotContext, epochProgress)
           nodeMetadataParamsV = validateNodeMetadataParams(signed, maxMetadataFieldsChars.value)
         } yield
@@ -81,13 +79,12 @@ object UpdateNodeParametersValidator {
         val nodeIds = signed.proofs.map(_.id).map(PeerId.fromId).toList
 
         nodeIds match {
-          case _ :: Nil if era.isActive(epochProgress) =>
+          // registration is open to any node whose address holds the minimum balance; seedlist membership no longer matters
+          case _ :: Nil if metanomicsV2Active(epochProgress) =>
             val balance = lastSnapshotContext.balances.getOrElse(signed.source, Balance.empty)
-            if (balance.satisfiesCollateral(DelegatedRewardsEra.MinimumRegistrationBalance))
-              signed.validNec[UpdateNodeParametersValidationError]
-            else
-              InsufficientRegistrationBalance(signed.source, balance, DelegatedRewardsEra.MinimumRegistrationBalance)
-                .invalidNec[Signed[UpdateNodeParameters]]
+            val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+            if (balance.satisfiesCollateral(minimum)) signed.validNec[UpdateNodeParametersValidationError]
+            else InsufficientRegistrationBalance(signed.source, balance, minimum).invalidNec[Signed[UpdateNodeParameters]]
           case nodeId :: Nil =>
             if (seedList.forall(_.exists(_.peerId === nodeId)))
               signed.validNec[UpdateNodeParametersValidationError]

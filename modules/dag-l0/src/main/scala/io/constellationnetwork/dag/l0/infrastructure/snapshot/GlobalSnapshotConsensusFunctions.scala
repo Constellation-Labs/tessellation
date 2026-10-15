@@ -11,10 +11,9 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParamet
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
-import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.{DelegatedRewardsConfigProvider, DelegatedRewardsEra}
+import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
@@ -66,20 +65,7 @@ object GlobalSnapshotConsensusFunctions {
     v3MigrationOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
-    private val rewardsEra = delegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
-
     def getRequiredCollateral: Amount = collateral
-
-    override def facilitatorFilter(
-      lastSignedArtifact: Signed[GlobalSnapshotArtifact],
-      lastContext: GlobalSnapshotContext,
-      peerId: PeerId
-    ): F[Boolean] =
-      peerId.toAddress[F].map { address =>
-        getBalances(lastContext)
-          .getOrElse(address, Balance.empty)
-          .satisfiesCollateral(rewardsEra.collateralAt(lastSignedArtifact.epochProgress, collateral))
-      }
 
     def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances
 
@@ -220,7 +206,7 @@ object GlobalSnapshotConsensusFunctions {
 
             case DelegateRewardsInput(udsar, psu, ep) =>
               if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
-                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu, lastArtifact.ordinal.next)
+                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }
