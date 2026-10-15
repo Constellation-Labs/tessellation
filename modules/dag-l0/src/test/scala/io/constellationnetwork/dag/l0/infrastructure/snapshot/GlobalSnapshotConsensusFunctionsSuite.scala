@@ -1188,28 +1188,26 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
                 expect(protocolPayout == 0L, "EventTrigger issues no program reward")
                   .and(expect(stardustPayouts.isEmpty, "EventTrigger issues no Stardust reward"))
                   .and(expect(artifact.delegateRewards.exists(_.isEmpty), "EventTrigger has no new delegation accrual"))
-                  .and(expect(producedInfo.balances(address).value.value == 499900L, "Withdrawal rewards and principal are credited once"))
-                  .and(expect(nextSupply.value.value == 500000L, "Withdrawal conserves outstanding supply"))
+                  .and(expect.same(Some(499900L), producedInfo.balances.get(address).map(_.value.value)))
+                  .and(expect.same(500000L, nextSupply.value.value))
               else
-                expect(protocolPayout == 3000L, "Protocol receives 30% of the 10000 datum emission")
+                expect
+                  .same(3000L, protocolPayout)
                   .and(expect.same(List(2500L), stardustPayouts))
-                  .and(expect.same(2500L, producedInfo.balances(stardust).value.value))
+                  .and(expect.same(Some(2500L), producedInfo.balances.get(stardust).map(_.value.value)))
+                  // operator payout and the equal withdrawal both reach the wallet
+                  .and(expect.same(Some(501250L), producedInfo.balances.get(address).map(_.value.value)))
+                  // net delegation accrues once
                   .and(
-                    expect(
-                      producedInfo.balances(address).value.value == 501250L,
-                      "Operator payout and equal withdrawal both reach the wallet"
+                    expect.same(
+                      Some(3150L),
+                      producedInfo.activeDelegatedStakes.flatMap(_.get(address)).flatMap(_.headOption).map(_.rewards.value.value)
                     )
                   )
-                  .and(
-                    expect(producedInfo.activeDelegatedStakes.get(address).head.rewards.value.value == 3150L, "Net delegation accrues once")
-                  )
-                  .and(expect(nextSupply.value.value == 510000L, "Only the epoch emission increases supply"))
-                  .and(
-                    expect(
-                      artifact.rewards.count(_.destination == address) == (if (epoch >= activation) 1 else 3),
-                      "The activation boundary preserves legacy transactions then aggregates operator and withdrawal payments"
-                    )
-                  )
+                  // only the epoch emission increases supply
+                  .and(expect.same(510000L, nextSupply.value.value))
+                  // legacy transactions before activation, one aggregated payment per address after
+                  .and(expect.same(if (epoch >= activation) 1 else 3, artifact.rewards.count(_.destination == address)))
 
             expect(artifact.ordinal == ordinal, s"Producer exercised the requested boundary $ordinal")
               .and(expect(replayedInfo == producedInfo, s"Actual download/replay context must equal production at $ordinal/$trigger"))
