@@ -1540,7 +1540,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     val facilitators = List((v2NodeAAddress, v2NodeAId.toPeerId), (v2NodeBAddress, v2NodeBId.toPeerId))
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
 
@@ -1578,7 +1578,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     val commissionShare = e * BigDecimal("0.035")
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Mainnet, DefaultDelegatedRewardsConfigProvider.getConfig())
@@ -1646,7 +1646,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     val flatInflationPerEpoch = v2MainnetTotalStake * BigDecimal("0.03") / 485502
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Mainnet, config)
 
@@ -1716,7 +1716,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       result <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, v2DevConfig)
@@ -1736,7 +1736,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
   test("EventTrigger mints nothing under the fixed-emission program") {
     val config = DefaultDelegatedRewardsConfigProvider.getConfig()
     for {
-      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       result <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Mainnet, config)
