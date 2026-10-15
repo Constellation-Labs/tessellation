@@ -26,6 +26,9 @@ trait GossipRoundRunner[F[_]] {
 
 object GossipRoundRunner {
 
+  private final case class PeerFailureState(consecutiveFailures: Int, excludedUntilMs: Option[Long])
+  private final case class PeerSelectionState(excluded: Set[PeerId], suspect: Set[PeerId])
+
   def make[F[_]: Async: Random: Metrics](
     clusterStorage: ClusterStorage[F],
     localHealthcheck: LocalHealthcheck[F],
@@ -35,16 +38,13 @@ object GossipRoundRunner {
   )(implicit S: Supervisor[F]): F[GossipRoundRunner[F]] =
     for {
       selectedPeersQueue <- Queue.bounded[F, Peer](cfg.maxConcurrentRounds.value * 2)
+      suspectPeersQueue <- Queue.bounded[F, Peer](cfg.maxConcurrentSuspectRounds.value * 2)
       selectedPeersR <- Ref.of(Set.empty[Peer])
-      // Per-peer recent-failure timestamps (millis). A peer is excluded from this
-      // runner's peer selection while it has at least `cfg.failureCountThreshold`
-      // failure timestamps within `cfg.failureWindow` of the present. The 15s gossip
-      // client timeout (application.conf:33) means each chronic-but-session-healthy
-      // peer otherwise costs a full slot in `cfg.maxConcurrentRounds` every cycle, and
-      // LocalHealthcheck restores it to Responsive as soon as `/session` succeeds.
-      // This bypasses that loop without changing the healthcheck semantics for other
-      // callers. State is per-runner so peer-round and common-round track independently.
-      gossipFailuresR <- Ref.of(Map.empty[PeerId, Vector[Long]])
+      // A first failure moves a peer to a separate, bounded suspect lane. Consecutive
+      // failures open its circuit for `failureWindow`, regardless of how long each
+      // failed request took. A successful round clears the state. This prevents slow
+      // response bodies from occupying the healthy-peer pool indefinitely.
+      gossipFailuresR <- Ref.of(Map.empty[PeerId, PeerFailureState])
     } yield
       new GossipRoundRunner[F] {
         private val logger = Slf4jLogger.getLogger[F]
@@ -61,6 +61,12 @@ object GossipRoundRunner {
             .parEvalMapUnordered(cfg.maxConcurrentRounds.value)(evalRound)
             .compile
             .drain
+        } >> S.supervise {
+          Stream
+            .fromQueueUnterminated(suspectPeersQueue)
+            .parEvalMapUnordered(cfg.maxConcurrentSuspectRounds.value)(evalRound)
+            .compile
+            .drain
         } >> S.supervise(selectPeers.foreverM).void
 
         /** Peers in transient states where gossip failures are expected and should not be logged at ERROR level. */
@@ -69,33 +75,32 @@ object GossipRoundRunner {
 
         private def recordFailure(pid: PeerId): F[Unit] =
           Clock[F].realTime.map(_.toMillis).flatMap { now =>
-            val cutoff = now - failureWindowMs
             gossipFailuresR.update { m =>
-              val prior = m.getOrElse(pid, Vector.empty[Long]).filter(_ >= cutoff)
-              // Cap retained timestamps at threshold; we only care whether we hit it,
-              // not how far past we are, so this also bounds the per-peer memory.
-              val updated = (prior :+ now).takeRight(failureThreshold)
-              m.updated(pid, updated)
+              val nextCount = m.get(pid).fold(1)(_.consecutiveFailures + 1).min(failureThreshold)
+              val excludedUntil = Option.when(nextCount >= failureThreshold)(now + failureWindowMs)
+              m.updated(pid, PeerFailureState(nextCount, excludedUntil))
             }
           }
 
         private def recordSuccess(pid: PeerId): F[Unit] =
           gossipFailuresR.update(_ - pid)
 
-        private def excludedPeerIds: F[Set[PeerId]] =
+        private def peerSelectionState(activePeerIds: Set[PeerId]): F[PeerSelectionState] =
           Clock[F].realTime.map(_.toMillis).flatMap { now =>
-            val cutoff = now - failureWindowMs
             gossipFailuresR.modify { m =>
-              // Prune timestamps that aged out of the window. Peers whose surviving
-              // list is below threshold are dropped from the map entirely so memory
-              // does not accumulate. The set of excluded peers is what's returned.
-              val pruned = m.flatMap {
-                case (pid, ts) =>
-                  val live = ts.filter(_ >= cutoff)
-                  if (live.isEmpty) None else Some(pid -> live)
+              val (updated, excluded, suspect) = m.iterator.filter { case (pid, _) => activePeerIds.contains(pid) }.foldLeft(
+                (Map.empty[PeerId, PeerFailureState], Set.empty[PeerId], Set.empty[PeerId])
+              ) {
+                case ((states, excluded, suspect), (pid, state @ PeerFailureState(_, Some(until)))) if until > now =>
+                  (states.updated(pid, state), excluded.incl(pid), suspect)
+                case ((states, excluded, suspect), (pid, PeerFailureState(_, Some(_)))) =>
+                  // Half-open after cooldown: one trial stays in the suspect lane.
+                  val halfOpen = PeerFailureState((failureThreshold - 1).max(0), None)
+                  (states.updated(pid, halfOpen), excluded, suspect.incl(pid))
+                case ((states, excluded, suspect), (pid, state)) =>
+                  (states.updated(pid, state), excluded, suspect.incl(pid))
               }
-              val excluded = pruned.collect { case (pid, ts) if ts.length >= failureThreshold => pid }.toSet
-              (pruned, excluded)
+              (updated, PeerSelectionState(excluded, suspect))
             }
           }
 
@@ -136,7 +141,11 @@ object GossipRoundRunner {
             peerTags(peer) :+ (reasonLabel -> err.getClass.getSimpleName)
           )
 
-        private def recordPeerSelectionSnapshot(allPeers: Set[Peer], excluded: Set[PeerId]): F[Unit] = {
+        private def recordPeerSelectionSnapshot(
+          allPeers: Set[Peer],
+          excluded: Set[PeerId],
+          suspect: Set[PeerId]
+        ): F[Unit] = {
           val countsByState = allPeers.groupMapReduce(_.state)(_ => 1)(_ + _)
           val stateGauges =
             NodeState.values.toList.traverse_ { state =>
@@ -157,31 +166,47 @@ object GossipRoundRunner {
               )
             }
 
-          stateGauges >> excludedGauges
+          val suspectByState = allPeers.filter(peer => suspect.contains(peer.id)).groupMapReduce(_.state)(_ => 1)(_ + _)
+          val suspectGauges =
+            NodeState.values.toList.traverse_ { state =>
+              Metrics[F].updateGauge(
+                "dag_gossip_suspect_peer_state_count",
+                suspectByState.getOrElse(state, 0).toLong,
+                Seq(peerStateLabel -> state.entryName, runnerLabel -> roundLabel)
+              )
+            }
+
+          stateGauges >> excludedGauges >> suspectGauges
         }
+
+        private def enqueuePeer(peer: Peer, suspect: Boolean): F[Unit] =
+          selectedPeersR.modify { selectedPeers =>
+            if (selectedPeers.contains(peer))
+              (selectedPeers, false)
+            else
+              (selectedPeers.incl(peer), true)
+          }.ifM(
+            (if (suspect) suspectPeersQueue else selectedPeersQueue)
+              .tryOffer(peer)
+              .ifM(Applicative[F].unit, selectedPeersR.update(_.excl(peer))),
+            Applicative[F].unit
+          )
 
         private def selectPeers: F[Unit] =
           for {
             _ <- Temporal[F].sleep(cfg.interval)
+            knownPeers <- clusterStorage.getPeers
+            knownPeerIds = knownPeers.iterator.map(_.id).toSet
             allPeers <- clusterStorage.getResponsivePeers
-            excluded <- excludedPeerIds
-            _ <- recordPeerSelectionSnapshot(allPeers, excluded)
-            eligiblePeers = if (excluded.isEmpty) allPeers else allPeers.filterNot(p => excluded.contains(p.id))
-            _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => eligiblePeers.map(_.id))
+            peerState <- peerSelectionState(knownPeerIds)
+            _ <- recordPeerSelectionSnapshot(allPeers, peerState.excluded, peerState.suspect)
+            eligiblePeers =
+              if (peerState.excluded.isEmpty) allPeers else allPeers.filterNot(p => peerState.excluded.contains(p.id))
+            _ <- ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_GOSSIP", () => eligiblePeers.iterator.map(_.id).toSet)
             selectedPeers <- selectedPeersR.get
             availablePeers = eligiblePeers.diff(selectedPeers)
             drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
-            _ <- drawnPeers.traverse { peer =>
-              selectedPeersR.modify { selectedPeers =>
-                if (selectedPeers.contains(peer))
-                  (selectedPeers, false)
-                else
-                  (selectedPeers.incl(peer), true)
-              }.ifM(
-                selectedPeersQueue.tryOffer(peer).ifM(Applicative[F].unit, selectedPeersR.update(_.excl(peer))),
-                Applicative[F].unit
-              )
-            }
+            _ <- drawnPeers.traverse(peer => enqueuePeer(peer, peerState.suspect.contains(peer.id)))
           } yield ()
       }
 }
