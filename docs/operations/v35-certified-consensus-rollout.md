@@ -9,6 +9,24 @@ the complete metagraph application rebuild described in the
 [Snapshot Streaming and Block Explorer reconciliation mode](snapshot-streaming-block-explorer-reconciliation.md).
 Passing this repository's tests does not satisfy those independent release gates.
 
+> **Update 2026-10-10 ([ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md) / #1627):**
+> no network will cross certified-consensus activation from a running legacy engine.
+> Testnet and IntegrationNet restart from a fresh v4.1 genesis with activation `0`, like dev.
+> Mainnet enters certified consensus through the existing recovery-seed root: activation
+> `A = R`, the final v3.5 global ordinal and the `CL_GL0_RECOVERY_SEED_COMMITTEE` rollback
+> anchor, with `fields-added-ordinals.tessellation-41-migration.mainnet = R+1` (see
+> [FieldsAddedOrdinals](fields-added-ordinals.md#the-v41-cutover-gate)). This build has no
+> pre-v35 Global L0 engine: it downloads and replays keys below activation but refuses to
+> produce one (`CertifiedConsensusNotActiveForProduction`), refuses to start without a
+> configured activation (`CertifiedConsensusActivationUnconfigured`), and rejects any
+> rollback anchor below activation (`RollbackAnchorBelowCertifiedActivation`, `Main.scala`).
+> The exact-key activation bridge (A-1 seeding from signed controller evidence and the
+> pinned A-1 SnapshotInfo) was deleted; a non-genesis activation is replayed only from a
+> public recovery root (`certified_recovery_root_required` otherwise). The separate
+> Currency protocol-v1 gate was folded into the v4.1 cutover, and
+> `consensusSchemaVersion` is now `36`. Steps below that describe the bridge or legacy
+> progress below the key are retained only where marked as historical.
+
 ## Scheduled activations
 
 - No replacement public activation key is recorded in this document yet. The former
@@ -18,16 +36,18 @@ Passing this repository's tests does not satisfy those independent release gates
   dormant code is a staging property, not a plan for an unscheduled extra deployment.
 - V35 certification applies only to Global L0. Currency L0 uses its Currency-local flat
   synchronous protocol and has no certified-consensus activation key.
-- Currency snapshot protocol `1.0.0` is also unscheduled on every public network. Its
-  gate is a GLOBAL L0 ordinal shared by all metagraph lineages, not a Currency-local v35
-  key. It may be announced in the same release window, but it remains a distinct gate.
+- Currency snapshot protocol `1.0.0` switches at the v4.1 cutover C
+  (`tessellation-41-migration`, accessor `currencySnapshotProtocolV1For`), a GLOBAL L0
+  ordinal shared by all metagraph lineages, not a Currency-local v35 key. On mainnet
+  C = R+1, one ordinal after the certified activation A = R.
 
 ## Compatibility boundaries
 
-- `consensusSchemaVersion=35` is an immediate active-cluster compatibility fence.
-- `certified-consensus-activation-ordinal` is the deterministic behavior boundary.
-- `fields-added-ordinals.currency-snapshot-protocol-v1` authorizes the signed Currency
-  artifact version transition from `0.0.1` to `1.0.0` using Global L0 ordinal space.
+- `consensusSchemaVersion=36` is an immediate active-cluster compatibility fence.
+- `certified-consensus-activation-ordinal` is the first key a node may produce.
+- `fields-added-ordinals.tessellation-41-migration` (the v4.1 cutover C) authorizes the
+  signed Currency artifact version transition from `0.0.1` to `1.0.0` using Global L0
+  ordinal space.
 - The v35 key is in Global snapshot ordinal space. The separate Currency protocol-v1
   gate is also expressed in Global ordinal space because Global L0 accepts the binaries.
 - Only the public DAG/Global incremental snapshot gains a trailing optional
@@ -51,9 +71,9 @@ Passing this repository's tests does not satisfy those independent release gates
   limit; v35 never reconstructs historical Currency binaries.
 
 Do not confuse the two gates. Nodes started with different schema/config hashes cannot
-form a healthy active consensus cluster even below the activation key. Conversely,
-deploying the aligned v35 jar with no public activation entry leaves Global v35 behavior
-dormant. The Currency protocol gate is copied into each L0's effective consensus config
+form a healthy active consensus cluster. A Global L0 with no activation entry for its
+environment refuses to start, and with the mainnet placeholder `9999999` it refuses to
+produce. The Currency protocol gate is copied into each L0's effective consensus config
 and is therefore fenced independently as well.
 
 ## Before selecting an activation key
@@ -62,18 +82,12 @@ and is therefore fenced independently as well.
    `consensusSchemaVersion`, deterministic config hash, and environment-specific
    activation key.
 2. Confirm that the target network has enough lead time to announce the activation.
-3. For Global L0, confirm that the last legacy artifact contains signed controller
-   evidence from which its activation committee can be seeded. Activation fails closed
-   when this evidence is absent; DAG `nextFacilitators` is not a valid substitute.
-   For a non-genesis DAG activation, the canonical signed seed and the final roster
-   after seedlist, collateral, selector, and projector processing must each contain at
-   least two members, and all current members together must be able to satisfy the
-   configured `Q(N+1)` next-seat headroom. Under supermajority a participating pair can
-   grow; under unanimity no finite `N` can prove an unseated `(N+1)`th signer, so a
-   non-genesis certified activation in unanimity mode fails closed. The exact activation
-   never falls back to local `self`. An activation configured at or before the first
-   facilitated key is genesis mode: there is no legacy-to-certified exact-key transition,
-   and intentional single-node development genesis remains supported. Global L0
+3. For Global L0, a non-genesis activation (mainnet) is entered only through the
+   env recovery seed with the rollback anchor R equal to the activation key (step 15);
+   the former exact-key bridge that seeded the committee from the last legacy artifact's
+   signed controller evidence was removed (v3.5 snapshots carry no `peerHistory`). An
+   activation configured at or before the first facilitated key is genesis mode, and
+   intentional single-node development genesis remains supported. Global L0
    facilitates from its first incremental snapshot at ordinal 1 (the full genesis
    snapshot occupies ordinal 0), so the shipped dev activation `0` authenticates the
    exact canonical ordinal-1 outcome and persists it as the predecessor of the first
@@ -84,14 +98,13 @@ and is therefore fenced independently as well.
    context hash and next authority. A future independently announced, content-addressed
    checkpoint may reduce long-range I/O, but is not required for activation. One peer's
    terminal private outcome is never long-range membership authority.
-4. Prove that the signed activation seed is live: its observed parent signers must meet
-   the frozen-committee finality floor, and any planned admission batch must satisfy
-   `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom
-   even while its freshly reset legacy proof-size window still reports bootstrap.
-5. Verify snapshot/state-proof golden fixtures and v34 pre-activation declaration
-   fixtures.
-6. Exercise activation from deliberately divergent legacy local sidecars and verify
-   that nodes derive one frozen committee and one ProposalValue hash.
+4. Prove that the recovery-seed committee is live: its observed parent signers must
+   meet the frozen-committee finality floor, and any planned admission batch must satisfy
+   `observed parent signers >= Q(seed size + batch size)`. The floor applies in every
+   round including bootstrap.
+5. Verify snapshot/state-proof golden fixtures.
+6. (Historical, bridge removed.) The divergent-legacy-sidecar activation exercise no
+   longer applies; exercise the recovery-seed entry instead (step 15).
 7. Exercise a view change, a carried QC, same-key certified outcome recovery, process
    restart, and coordinated rollback in staging. Kill a process after its prepare vote
    and again after QC formation; after restart, verify that the journal refuses a
@@ -129,10 +142,11 @@ and is therefore fenced independently as well.
     SDK selected for activation. The Tessellation PR workflow compiling
     Snapshot Streaming `release/testnet` against the candidate SDK is a compatibility
     test only; it is not the separately versioned Snapshot Streaming release artifact.
-    That CI build must resolve both `lastLegacyStateProofOrdinal` and
-    `fieldsAddedOrdinals.subTrieRoots` into `GlobalStateProofSelector`; development enables
-    sub-trie roots at ordinal 0 so the E2E validates the same signed proof shape rather than
-    compiling against it while leaving it dormant.
+    That CI build must resolve both `lastLegacyStateProofOrdinalFor(environment)` (derived
+    as C-1) and `fieldsAddedOrdinals.subTrieRootsFor(environment)` (C) into
+    `GlobalStateProofSelector`; development enables sub-trie roots at ordinal 0 so the E2E
+    validates the same signed proof shape rather than compiling against it while leaving
+    it dormant.
     For IntegrationNet, prepare the corresponding change in the separate
     `Constellation-Labs/snapshot-streaming` repository on its
     `release/integrationnet` branch: pin `project/Dependencies.scala` to the exact
@@ -148,21 +162,16 @@ and is therefore fenced independently as well.
     application config neither overrides it nor includes the SDK's classpath
     `application.conf`. Make the generated config begin with
     `include classpath("application")`, set `snapshotStreaming.environment = integrationnet`
-    explicitly, and log/assert the resolved selector at startup. Before launch, record
-    `environment=integrationnet`, `lastLegacyStateProofOrdinal=5075000`, and
-    `subTrieRootsActivationOrdinal=5880000`; a two-argument selector with the wrong
-    environment remains incompatible.
+    explicitly, and log/assert the resolved selector at startup. A two-argument selector
+    with the wrong environment remains incompatible. (The IntegrationNet values
+    `5075000`/`5880000` recorded here previously belong to history discarded by the v4.1
+    fresh genesis; IntegrationNet now resolves both boundaries from C = 0.)
     The Tessellation `release/integrationnet` workflow does not publish or deploy
     Snapshot Streaming. Record the SS source commit, workflow run, jar checksum/image
     digest, and Tessellation SDK version; verify that artifact re-derives and accepts
     candidate Global state proofs before selecting the activation key. Do not cross the
     activation key while the prior Snapshot Streaming build is deployed.
-    IntegrationNet has already crossed the independent sub-trie proof gate at ordinal
-    `5880000`; therefore its order is stricter: prove the currently deployed out-of-band
-    artifact's source/checksum and full-proof compatibility, or update and deploy the
-    reproducible `release/integrationnet` SS branch, before restarting/resuming Tessellation
-    at any current checkpoint. Do not move the old proof gate forward: replay at and above
-    `5880000` must continue using the proof shape already signed there. The external SS
+    The external SS
     restart path resets `nextOrdinal.json` to ordinal zero, clears the configured OpenSearch
     indices with `clean_indices`, and restarts ingestion; replay then rebuilds its
     S3/PostgreSQL export state. Back up and explicitly approve/coordinate all of those
@@ -173,8 +182,8 @@ and is therefore fenced independently as well.
     ordinary no-reorg upgrade, deliberate full replay/rebuild, or canonical rollback
     divergent-suffix repair. Do not let a deployment script's default full rebuild stand in
     for an explicit mode/owner decision.
-13. Verify public certified-lineage retention. From A-1 (or the canonical first
-    incremental root for certification-from-genesis) through the current tip, every signed
+13. Verify public certified-lineage retention. From the recovery root R (or the canonical
+    first incremental root for certification-from-genesis) through the current tip, every signed
     incremental artifact must be readable after a process restart. The independently
     trusted root and downloaded terminal must also have their complete SnapshotInfo/context
     so their state proofs can be validated. Interior SnapshotInfo follows the ordinary
@@ -218,18 +227,15 @@ and is therefore fenced independently as well.
     sources but is not yet publicly durable; then prove `R+2` carries the complete
     `R+1` QC. Stop every source, remove every private outcome/sidecar, and require a
     fresh env-free validator to reconstruct and adopt from public `R/R+1/R+2` data.
-    The negative `R+1`-only/all-source-loss case must fail closed. Repeat across the
-    exact activation boundary. In particular, prevent the first certified round `A`
-    from finalizing, assert that recovery seeds at `A-1` and `A-2` are rejected, then
-    perform the reconciled `<= A-3` recovery, rebuild the legacy evidence window,
-    cross `A`, and reach `R+2` public durability. Complete a later full cold restart
-    with the env absent before declaring recovery activation-ready.
+    The negative `R+1`-only/all-source-loss case must fail closed. For the mainnet
+    cutover the anchor is the final v3.5 ordinal and `R = A`; assert that any anchor
+    below activation is rejected (`RollbackAnchorBelowCertifiedActivation`). Complete a
+    later full cold restart with the env absent before declaring recovery activation-ready.
 
 Capacity-plan the added certificate history before activation. At the measured 73-seat
 committee, `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a
 sustained 43-second cadence, before filesystem/JSON overhead. Signed incremental artifacts were
-already retained; interior SnapshotInfo remains logarithmically retained, while the exact A-1
-activation-parent SnapshotInfo is explicitly pinned for the lifetime of that configured activation,
+already retained and interior SnapshotInfo remains logarithmically retained,
 so v35 does not add the rejected
 approximately 1.2-TB/year contiguous-context history or an O(epoch)-per-round cutoff scan. Record
 the actual certificate/artifact disk-growth rate and free-space runway during the IntegrationNet
@@ -261,9 +267,9 @@ blocker.
 
 ## Deployment sequence
 
-1. Choose and announce one future Global v35 activation key. If Currency protocol v1 is
-   included, separately choose and announce one future Global L0 ordinal for all metagraph
-   lineages; it need not equal the v35 key.
+1. (Mainnet v3.5 -> v4.1.) Announce the cutover. Halt v3.5 and confirm the source nodes
+   share tip R and its hash; pin `certified-consensus-activation-ordinal.mainnet = R` and
+   `tessellation-41-migration.mainnet = R+1` in the release configuration.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
    certified-vote-lock journals, configuration, and logs; verify a coherent
    pre-activation checkpoint. Version 35 has not been publicly activated on any operated
@@ -279,10 +285,15 @@ blocker.
    production artifact was released. Snapshot Streaming/Block Explorer release approval
    and complete metagraph-stack release approval are separate recorded go/no-go gates.
    Do not canary a mixed active consensus fleet.
-4. Cold-start the cluster and verify identical deterministic config hashes and normal
-   legacy progress below the key.
-5. Before crossing, verify every expected active node is on the recorded jar/config.
-6. At the key, verify the canonical legacy-window reset, frozen full/Core hashes,
+4. Start the lead source with `run-rollback --rollback-hash H(R)` and the other sources
+   with `run-validator`, all with `CL_GL0_RECOVERY_SEED_COMMITTEE` set to the source
+   committee (procedure in the `dag-l0.conf` comment above
+   `certified-consensus-activation-ordinal`). Verify identical deterministic config hashes.
+5. Wait until R+1 is certified, R+2 carries its QC and
+   `dag_consensus_recovery_seed_boundary_publicly_durable == 1`, then unset the env var on
+   the sources. Community validators re-join through ordinary download from the public
+   recovery root and certified open admission; they do not sign or earn until admitted.
+6. After the boundary, verify frozen full/Core hashes,
    ProposalQC, CoreCommitQC, full artifact finality floor, persisted certified sidecar,
    child-carried parent certificate, and identical semantic value/derived operational
    outcome on multiple nodes. Raw sidecar files and equivalent carried QCs may contain
@@ -305,19 +316,10 @@ blocker.
 
 Before activation, verify the ordinary-download lineage boundary on every source node:
 
-- the exact activation outcome validates from the locally stored, state-proof-checked
-  A-1 snapshot. State-proof/file validation uses the ordinal-selected historical
-  rules, while the reconstructed legacy outcome identity and newly reset v35 committee
-  hash use the current consensus hasher, matching live activation even across a
-  hash-transition boundary. Before signed controller evidence can seed authority, the
-  A-1 artifact's embedded ordinal must equal the requested index, its signature is verified
-  with that expected ordinal's hasher, proof signer IDs must be unique, and the
-  context-derived state proof must equal the artifact state proof. Live activation has already
-  applied the then-current join-fenced seedlist/collateral policy. A later historical replay
-  deliberately does not apply today's mutable seedlist to that old canonical root. The exact
-  A-1 SnapshotInfo is permanently protected from ordinary logarithmic pruning. Every public
-  network's activation root is already in the JSON-serde era; no v35 field has a Kryo
-  fallback or compatibility path;
+- every public network's activation root is already in the JSON-serde era; no v35 field
+  has a Kryo fallback or compatibility path. A non-genesis activation has no ordinary
+  replay root of its own: the download validator requires the public recovery root
+  (`certified_recovery_root_required` otherwise);
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
 - the canonical first incremental genesis root at key 1 and an exact
@@ -329,7 +331,7 @@ Before activation, verify the ordinary-download lineage boundary on every source
   authority through the same typed committee projector; historical adoption verifies
   the fixed-floor QC and its certified authority effect without re-running current policy;
 - each public child at N+1 carries N's complete `CertifiedOutcome`. A downloader starts
-  from its independently validated A-1/genesis root and walks every public signed
+  from its independently validated recovery/genesis root and walks every public signed
   incremental artifact in order. The prior QC fixes the authority for N; N's QC fixes the
   authority for N+1 and commits the terminal operational-state preimage. Historical
   verification uses the fixed BFT floor rather than current policy. Artifact signatures,
@@ -396,8 +398,8 @@ accepted rollback policy prunes records above its accepted ordinal; an aborted s
 operated procedure always stops the fleet, starts exactly one controlled rollback lead,
 and starts every other node as a validator.
 
-No restart is required merely because the ordinal crosses; the aligned nodes switch
-deterministically at the configured key.
+There is no in-place crossing: production starts at the activation key only through the
+recovery-seed cold restart (or genesis).
 
 ## Availability and rollback
 
@@ -405,10 +407,9 @@ V35 does not shrink the current-round safety universe. Loss of the configured Co
 quorum prevents the prepare/commit certificate; loss of the configured full-committee
 quorum prevents artifact finality. Either condition may require a coordinated restart.
 
-The immediately active Global L0 bridge is deliberately halt-safe as well. Under
-`FreezeAfterVote`, a node that has signed at a key will not abandon into a conflicting
-same-key attempt and will not emit a VCC/TC that would authorize unsafe re-voting. Under
-`RetainSigningLeases`, a timeout certificate also does not delete its silent non-voters
+Certified consensus is deliberately halt-safe. The certified vote-lock journal prevents a
+node that has voted at a key from voting for a conflicting value, and under
+`RetainSigningLeases` a timeout certificate also does not delete its silent non-voters
 from the current-round denominator. Thus a cluster-wide 2-of-4 (or analogous subquorum)
 stall with no corroborated peer ahead has no automatic protocol escape: it remains visibly
 held until the missing members recover or the operator performs the documented coordinated
@@ -432,6 +433,8 @@ If activation fails:
    lineage before resuming ingest; source-majority validation does not make ordinal-unique
    storage reorg-aware.
 4. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
+   This build cannot produce or roll back below activation, so returning to v3.5
+   production requires the v3.5 jar.
 5. Move the activation key only through another announced, full-cluster rollout.
 
 Do not work around a fast-path predecessor-sidecar error by copying a peer's JSON

@@ -50,10 +50,10 @@ object SpendActionAggregateBalanceGateSuite extends MutableIOSuite {
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       enforceAggregateBalance: Boolean
-    ): IO[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidationError])])] =
+    ): IO[(Map[Address, List[SpendAction]], Map[Address, List[(SpendAction, List[SpendActionValidationError])]])] =
       flags
         .update(_ :+ enforceAggregateBalance)
-        .as((Map.empty[Address, List[SpendAction]], Map.empty[Address, (SpendAction, List[SpendActionValidationError])]))
+        .as((Map.empty[Address, List[SpendAction]], Map.empty[Address, List[(SpendAction, List[SpendActionValidationError])]]))
   }
 
   private def enforcedAt(ordinals: List[SnapshotOrdinal])(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[List[Boolean]] =
@@ -62,7 +62,7 @@ object SpendActionAggregateBalanceGateSuite extends MutableIOSuite {
       lastSnapshotContext = mkGlobalSnapshotInfo()
       manager <- mkManager(
         lastSnapshotContext.some,
-        fixingSpendActionAggregateBalanceOrdinal = activation,
+        tessellation41MigrationOrdinal = activation,
         spendActionValidatorOverride = recordingValidator(flags).some
       )
       _ <- ordinals.traverse_ { ordinal =>

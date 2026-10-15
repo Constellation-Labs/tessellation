@@ -319,8 +319,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         SortedMap.empty,
         SortedSet.empty,
         SortedSet.empty,
-        SortedSet.empty,
-        Amount.empty
+        SortedSet.empty
       )
         .pure[F]
 
@@ -428,10 +427,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           delegatedRewardsConfigProvider,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
-          mptStore,
-          100
+          mptStore
         )
     } yield globalSnapshotConsensusFunction
   }
@@ -922,7 +918,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue,
-        SnapshotOrdinal.MinValue,
         mptStore,
         SnapshotOrdinal.MinValue,
         SnapshotOrdinal.unsafeApply(100L)
@@ -942,6 +937,141 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       // followers (see the note in GlobalSnapshotContextFunctions), so a bad proof is not an error on this path.
       expect.same(List(false, true), observed.reverse) &&
         expect(recreated.balances == signedGenesis.value.info.toGlobalSnapshotInfo.balances)
+  }
+
+  // B7: acceptance ends with an incremental MPT sync, and createContext only learns that a non-final allow-spend mode
+  // diverged after accept returns. Without a savepoint the next mode then starts from (and applies its deltas on top of)
+  // the abandoned attempt's MPT state, and its MPT-reading validators see that state too.
+  test("global historical recreation restores the MPT store before retrying the next allow-spend mode") { res =>
+    implicit val (_, j, h, sp, m) = res
+    implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
+
+    val probeKey = GlobalStateKey.hypergraph(
+      io.constellationnetwork.schema.mpt.GlobalStateFieldId.Balances,
+      Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
+    )
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+      consensusFunctions <- mkGlobalSnapshotConsensusFunctions()
+      (artifact, _, _) <- consensusFunctions.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info.toGlobalSnapshotInfo,
+        h,
+        EventTrigger,
+        Set.empty,
+        Set.empty,
+        _ => None.pure[IO]
+      )
+      signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact, keyPair)
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](mptProducer, GlobalStateKey.toHex[IO])
+      dbLogger <- Slf4jLoggerBundle.makeUnsafe[IO]
+      realManager = mkGlobalSnapshotAcceptanceManager(asbam, mptStore, dbLogger)
+      probeSeenByMode <- Ref.of[IO, List[(Boolean, Boolean)]](List.empty)
+      // Escrow runs the real acceptance (its incremental MPT sync included), leaves one more stray entry, and then
+      // fails the way a divergent mode does after accept has returned.
+      divergingEscrow = new GlobalSnapshotAcceptanceManager[IO] {
+        def accept(
+          ordinal: SnapshotOrdinal,
+          epochProgress: EpochProgress,
+          blocksForAcceptance: List[Signed[Block]],
+          allowSpendBlocksForAcceptance: List[Signed[swap.AllowSpendBlock]],
+          tokenLockBlocksForAcceptance: List[Signed[tokenLock.TokenLockBlock]],
+          scEvents: List[StateChannelOutput],
+          unpEvents: List[Signed[io.constellationnetwork.schema.node.UpdateNodeParameters]],
+          cdsEvents: List[Signed[io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake.Create]],
+          wdsEvents: List[Signed[io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake.Withdraw]],
+          cncEvents: List[Signed[io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral.Create]],
+          wncEvents: List[Signed[io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral.Withdraw]],
+          lastSnapshotContext: GlobalSnapshotInfo,
+          lastActiveTips: SortedSet[ActiveTip],
+          lastDeprecatedTips: SortedSet[DeprecatedTip],
+          calculateRewardsFn: RewardsInput => IO[DelegatedRewardsResult],
+          validationType: StateChannelValidationType,
+          getGlobalSnapshotByOrdinal: SnapshotOrdinal => IO[Option[Hashed[GlobalIncrementalSnapshot]]],
+          allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
+        ) = {
+          val real = realManager.accept(
+            ordinal,
+            epochProgress,
+            blocksForAcceptance,
+            allowSpendBlocksForAcceptance,
+            tokenLockBlocksForAcceptance,
+            scEvents,
+            unpEvents,
+            cdsEvents,
+            wdsEvents,
+            cncEvents,
+            wncEvents,
+            lastSnapshotContext,
+            lastActiveTips,
+            lastDeprecatedTips,
+            calculateRewardsFn,
+            validationType,
+            getGlobalSnapshotByOrdinal,
+            allowSpendBlockAcceptanceMode
+          )
+          mptStore
+            .contains(probeKey)
+            .flatMap(seen => probeSeenByMode.update((allowSpendBlockAcceptanceMode.creditDestination, seen) :: _)) >>
+            (allowSpendBlockAcceptanceMode match {
+              case AllowSpendBlockAcceptanceMode.Escrow =>
+                real >> mptStore.insert(probeKey, "abandoned escrow attempt") >>
+                  IO.raiseError(new IllegalStateException("escrow attempt diverged after acceptance"))
+              case _ => real
+            })
+        }
+      }
+      contextFunctions = GlobalSnapshotContextFunctions.make[IO](
+        divergingEscrow,
+        updateDelegatedStakeAcceptanceManager,
+        EpochProgress(NonNegLong.unsafeFrom(1L)),
+        SnapshotOrdinal.MinValue,
+        mptStore,
+        SnapshotOrdinal.MinValue,
+        SnapshotOrdinal.unsafeApply(100L)
+      )
+      _ <- contextFunctions.createContext(
+        signedGenesis.value.info.toGlobalSnapshotInfo,
+        signedLastArtifact,
+        signedArtifact,
+        _ => None.pure[IO]
+      )
+      seen <- probeSeenByMode.get.map(_.reverse)
+      probeAfter <- mptStore.contains(probeKey)
+      recreatedRoot <- mptStore.build(signedArtifact.ordinal).map(_.toOption.map(_.rootNode.digest))
+      freshProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      freshStore <- MptStore.make[IO, GlobalStateKey](freshProducer, GlobalStateKey.toHex[IO])
+      _ <- GlobalSnapshotContextFunctions
+        .make[IO](
+          mkGlobalSnapshotAcceptanceManager(asbam, freshStore, dbLogger),
+          updateDelegatedStakeAcceptanceManager,
+          EpochProgress(NonNegLong.unsafeFrom(1L)),
+          SnapshotOrdinal.MinValue,
+          freshStore,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue
+        )
+        .createContext(signedGenesis.value.info.toGlobalSnapshotInfo, signedLastArtifact, signedArtifact, _ => None.pure[IO])
+      singleModeRoot <- freshStore.build(signedArtifact.ordinal).map(_.toOption.map(_.rootNode.digest))
+    } yield
+      expect(
+        // (creditDestination, probe present): escrow first, then the legacy credit-destination retry
+        seen == List(false -> false, true -> false),
+        s"the legacy retry must start from the pre-attempt MPT state: $seen"
+      ).and(expect(!probeAfter, "nothing from the abandoned escrow attempt may remain in the MPT store"))
+        .and(
+          expect(
+            recreatedRoot == singleModeRoot,
+            s"the recreated MPT root must equal a single clean attempt: $recreatedRoot vs $singleModeRoot"
+          )
+        )
   }
 
   test("createProposalArtifact - deterministic: two independent calls with same inputs produce identical artifacts") { res =>

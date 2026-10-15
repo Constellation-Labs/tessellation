@@ -198,3 +198,12 @@ than maintaining divergent agent-specific rules.
   CODEOWNERS and broader golden compatibility fixtures should be added after the responsible owner
   or team and protected path set are explicitly selected; a path-only detector cannot find every
   semantic schema change.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+The rules above are unchanged. One reference is now derived rather than configured:
+`lastLegacyStateProofOrdinal` (and the incremental delegated-staking boundary) resolve from the v4.1
+cutover `fields-added-ordinals.tessellation-41-migration` as C-1. A missing cutover still resolves to
+`MaxValue`, so the defaults stated above hold, and both values remain `deterministicConfigHash`
+inputs. [ADR-0035](0035-v35-to-v41-mainnet-migration.md) records its own classification under this
+ADR (class 2 plus a narrow, approved class 3).

@@ -188,58 +188,12 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect(!postBootstrap.allowsOpenAdmission)
   }
 
-  test("the batch crossing bootstrap threshold must support the floor it activates") {
-    val first = peer(1)
-    val second = peer(2)
-    val committeeOfTwo = Set(first, second)
-    val singletonGate = OpenAdmissionPolicy.headroomRequired(
-      certifiedConsensusActive = false,
-      allowSingletonBootstrapExpansion = false,
-      bootstrapActive = true,
-      currentCommitteeSize = 1,
-      maxAdmissionSeats = 1,
-      bootstrapCompleteProofsThreshold = 3
-    )
-    val crossingGate = OpenAdmissionPolicy.headroomRequired(
-      certifiedConsensusActive = false,
-      allowSingletonBootstrapExpansion = false,
-      bootstrapActive = true,
-      currentCommitteeSize = 2,
-      maxAdmissionSeats = 1,
-      bootstrapCompleteProofsThreshold = 3
-    )
-    val oneSignerCrossing = OpenAdmissionPolicy.evaluate(
-      cadenceAllowed = true,
-      currentCommittee = committeeOfTwo,
-      locallyObservedParentSigners = Some(Set(first)),
-      quorumThresholdFraction = 2.0 / 3.0,
-      headroomGateActive = crossingGate
-    )
-    val twoSignerCrossing = OpenAdmissionPolicy.evaluate(
-      cadenceAllowed = true,
-      currentCommittee = committeeOfTwo,
-      locallyObservedParentSigners = Some(committeeOfTwo),
-      quorumThresholdFraction = 2.0 / 3.0,
-      headroomGateActive = crossingGate
-    )
-
-    expect(!singletonGate) &&
-    expect(crossingGate) &&
-    expect(!oneSignerCrossing.allowsProbationAdmission) &&
-    expect(!oneSignerCrossing.allowsOpenAdmission) &&
-    expect(twoSignerCrossing.allowsProbationAdmission) &&
-    expect(twoSignerCrossing.allowsOpenAdmission)
-  }
-
   test("v35 announced activation keeps next-seat headroom active while the reset proof window reports bootstrap") {
     val singleton = Set(peer(1))
     val gate = OpenAdmissionPolicy.headroomRequired(
-      certifiedConsensusActive = true,
       allowSingletonBootstrapExpansion = false,
-      bootstrapActive = true,
       currentCommitteeSize = singleton.size,
-      maxAdmissionSeats = 1,
-      bootstrapCompleteProofsThreshold = 3
+      maxAdmissionSeats = 1
     )
     val decision = OpenAdmissionPolicy.evaluate(
       cadenceAllowed = true,
@@ -261,20 +215,14 @@ object OpenAdmissionPolicySuite extends FunSuite {
     val singleton = Set(first)
     val committeeOfTwo = Set(first, second)
     val singletonGate = OpenAdmissionPolicy.headroomRequired(
-      certifiedConsensusActive = true,
       allowSingletonBootstrapExpansion = true,
-      bootstrapActive = true,
       currentCommitteeSize = singleton.size,
-      maxAdmissionSeats = 1,
-      bootstrapCompleteProofsThreshold = 3
+      maxAdmissionSeats = 1
     )
     val crossingGate = OpenAdmissionPolicy.headroomRequired(
-      certifiedConsensusActive = true,
       allowSingletonBootstrapExpansion = false,
-      bootstrapActive = true,
       currentCommitteeSize = committeeOfTwo.size,
-      maxAdmissionSeats = 1,
-      bootstrapCompleteProofsThreshold = 3
+      maxAdmissionSeats = 1
     )
     val singletonDecision = OpenAdmissionPolicy.evaluate(
       cadenceAllowed = true,

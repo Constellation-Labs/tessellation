@@ -1,15 +1,23 @@
 # Metagraph upgrade guide: Tessellation v4.1 / Currency protocol v1
 
 This guide covers the coordinated metagraph work required for the Tessellation v4.1
-release that carries Global L0 consensus schema v35 and the separately activated Currency
-snapshot protocol `1.0.0`.
+release that carries Global L0 certified consensus (v35 protocol, `consensusSchemaVersion` 36)
+and the Currency snapshot protocol `1.0.0`.
+
+> **Update 2026-10-10 (ADR-0035 / #1627):** testnet and integrationnet are fresh-genesised on
+> v4.1, so Currency protocol `1.0.0` is active from genesis there (gate value `0`). On mainnet the
+> Currency protocol boundary is no longer a separate gate: it is the v3.5 -> v4.1 cutover C
+> (`fields-added-ordinals.tessellation-41-migration`, set to R + 1 where R is the final v3.5 Global
+> L0 ordinal). See [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md).
 
 The node release and Currency protocol transition are separate gates:
 
 - the release version and deterministic configuration fences which binaries can join a
   cluster; and
-- `fields-added-ordinals.currency-snapshot-protocol-v1` selects Currency snapshot
-  protocol `1.0.0` at one announced **Global L0 ordinal**.
+- `fields-added-ordinals.tessellation-41-migration` (the v4.1 cutover C) selects Currency
+  snapshot protocol `1.0.0` at one announced **Global L0 ordinal**. The former separate
+  `currency-snapshot-protocol-v1` key was folded into it; `currencySnapshotProtocolV1For`
+  resolves to C.
 
 Do not infer either gate from SemVer. Record the exact release tag and announced ordinal
 in the release announcement and deployment manifest.
@@ -82,6 +90,25 @@ This release does **not** claim source- or binary-compatible metagraph lifecycle
 Compilation, unit tests, assembly, and an end-to-end protocol-boundary rehearsal are the
 compatibility proof for each metagraph. Resolve application changes against the selected
 SDK instead of assuming that a dependency-only edit is sufficient.
+
+### SDK source changes from ADR-0035 / #1627
+
+The SDK exposes node-shared types. A metagraph that names or constructs any of the following
+must update its source, not only rebuild:
+
+- `FieldsAddedOrdinals` (config type): the fields `subTrieRoots`, `feeTransactionSecurity`,
+  `currencySnapshotProtocolV1`, `fixingDelegatedStakeDoubleWithdrawal` and
+  `fixingSpendActionAggregateBalance` were folded into `tessellation41Migration`;
+  `scFeeBalanceFromContext`, `setSumFix` and `delegatedRewardsFullCommittee` were removed. The
+  snapshot config maps `lastLegacyStateProofOrdinal` and
+  `incrementalDelegatedStakingStartingOrdinal` were removed too; their `...For(environment)`
+  accessors now derive `C - 1`. Use the named `...For(environment)` accessors rather than raw maps.
+- `FeeTransactionValidator.validate` takes a `FeeTransactionSignerPolicy`
+  (`LegacyExclusiveSource`, `VerifiedExclusiveSource`, `VerifiedSourceAuthorized`) instead of a
+  `Boolean`.
+- `DelegatedRewardsResult` no longer has `totalEmittedRewardsAmount`.
+- `SpendActionValidator.validateReturningAcceptedAndRejected` returns every rejection per
+  metagraph: `Map[Address, List[(SpendAction, List[SpendActionValidationError])]]`.
 
 ## Network-wide metagraph census
 

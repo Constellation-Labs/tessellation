@@ -757,6 +757,60 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
     } yield expect(result.isLeft)
   }
 
+  test("generateTokenUnlocks - legacy mode skips an orphan once the processed-withdrawal partition removes it") { res =>
+    implicit val (jsonHasher, sp, mptStore, js) = res
+    val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
+
+    def pending(source: Address, ref: Hash) = PendingDelegatedStakeWithdrawal(
+      Signed(
+        UpdateDelegatedStake.Create(
+          source,
+          PeerId(Hex("")),
+          DelegatedStakeAmount(100L),
+          DelegatedStakeFee(10L),
+          ref,
+          DelegatedStakeReference(DelegatedStakeOrdinal(1L), Hash("parent"))
+        ),
+        testProofs
+      ),
+      Amount(50L),
+      SnapshotOrdinal(1L),
+      EpochProgress(100L)
+    )
+
+    for {
+      kp <- KeyPairGenerator.makeKeyPair[IO]
+      testAddress = kp.getPublic.toAddress
+      activeTokenLock <- Signed.forAsyncHasher(
+        TokenLock(
+          testAddress,
+          TokenLockAmount(100L),
+          TokenLockFee(10L),
+          TokenLockReference(TokenLockOrdinal(1L), Hash("tokenLockRef")),
+          none,
+          none,
+          none
+        ),
+        kp
+      )
+      activeRef <- activeTokenLock.toHashed.map(_.hash)
+      orphanRef = Hash("orphanTokenLockRef")
+      expiredWithdrawals = SortedMap(testAddress -> SortedSet(pending(testAddress, activeRef), pending(testAddress, orphanRef)))
+      activeByRef = Map(activeRef -> activeTokenLock)
+      unfiltered = acceptanceManager.generateTokenUnlocks(expiredWithdrawals, List.empty, activeByRef, UnlockMode.Legacy)
+      (backed, orphans) = GlobalSnapshotAcceptanceManager.partitionBackedWithdrawals(expiredWithdrawals, activeByRef)
+      filtered = acceptanceManager.generateTokenUnlocks(backed, List.empty, activeByRef, UnlockMode.Legacy)
+    } yield
+      expect(unfiltered.isLeft, s"the unfiltered orphan reproduces the mainnet MissingTokenLock halt: $unfiltered")
+        .and(expect(List(testAddress -> orphanRef) == orphans, s"the orphan pair is reported for the skip warning: ${orphans}"))
+        .and(
+          expect(
+            Right(Map(testAddress -> List(TokenUnlock(activeRef, TokenLockAmount(100L), None, testAddress)))) == filtered,
+            s"only the backed lock unlocks: ${filtered}"
+          )
+        )
+  }
+
   test("generateTokenUnlocks - combines withdrawals and replacements in effective-ref order") { res =>
     implicit val (jsonHasher, sp, mptStore, js) = res
     val acceptanceManager = TokenLockStateManager.make[IO](mptStore)

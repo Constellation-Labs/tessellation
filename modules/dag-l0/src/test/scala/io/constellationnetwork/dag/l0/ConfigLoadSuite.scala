@@ -21,9 +21,8 @@ import weaver.SimpleIOSuite
   *   - `Main.run` then loads `AppConfigReader` (the dag-l0 layer, `dag-l0.conf`)
   *
   * both off `TessellationIOApp.loadConfigAs`, i.e. `ConfigSource.resources("dag-l0.conf")` falling back to `ConfigSource.default`.
-  * Replicating that here turns a packaged-config regression -- e.g. a refined-type field set to a value its predicate rejects, like the
-  * `PosInt` quorum-shrink map that was given `0` (fix e159385fd) -- into a red test instead of a `ConfigReaderException` that crashes every
-  * node at startup. See feedback_fix_type_not_revert_feature.
+  * Replicating that here turns a packaged-config regression -- e.g. a refined-type field set to a value its predicate rejects -- into a red
+  * test instead of a `ConfigReaderException` that crashes every node at startup.
   */
 object ConfigLoadSuite extends SimpleIOSuite {
 
@@ -38,16 +37,8 @@ object ConfigLoadSuite extends SimpleIOSuite {
     source.loadF[IO, SharedConfigReader]().as(success)
   }
 
-  test("level 2: AppConfigReader parses, and the per-env quorum-shrink map keeps its 0s (Main startup)") {
-    source.loadF[IO, AppConfigReader]().map { cfg =>
-      val qs = cfg.snapshot.quorumShrinkActivationViews
-      // The map is typed Int precisely so 0 (= disabled) is representable per environment; a PosInt
-      // typing rejects these 0s at load (the alpha.158 startup crash). 0 is the regression guard.
-      expect(qs.get(AppEnvironment.Testnet).contains(10))
-        .and(expect(qs.get(AppEnvironment.Mainnet).contains(0)))
-        .and(expect(qs.get(AppEnvironment.Integrationnet).contains(0)))
-        .and(expect(qs.get(AppEnvironment.Dev).contains(0)))
-    }
+  test("level 2: AppConfigReader parses (Main startup)") {
+    source.loadF[IO, AppConfigReader]().as(success)
   }
 
   test("the packaged IntegrationNet config resolves identically for the join fence and live consensus") {
@@ -59,8 +50,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
         effective =>
           expect.same(Some(1000), effective.facilitatorSelectionMax) &&
             expect.same(Some(9), effective.coreCommitteeSize) &&
-            expect.same(0, effective.quorumShrinkActivationViews) &&
-            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
+            expect.same(0L, effective.certifiedConsensusActivationKey) &&
             expect.same(9, effective.eventTriggerThreshold) &&
             expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
@@ -73,12 +63,10 @@ object ConfigLoadSuite extends SimpleIOSuite {
   test("resolver defaults and floors are applied before hashing") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val withoutEnvironmentOverrides = cfg.snapshot.copy(
-        maxFacilitatorCount = Map.empty,
+        consensus = cfg.snapshot.consensus.copy(maxFacilitatorCount = None, activeAdmissionRecentSignerWindow = 1),
         certifiedConsensusActivationOrdinal = Map.empty,
         coreCommitteeSize = Map.empty,
-        quorumShrinkActivationViews = Map.empty,
         activeAdmissionMinProbationReentrySlots = Map.empty,
-        activeAdmissionRecentSignerWindow = Map(AppEnvironment.Integrationnet -> 1),
         activeFacilitatorTarget = Map.empty,
         activeFacilitatorMax = Map.empty
       )
@@ -89,12 +77,27 @@ object ConfigLoadSuite extends SimpleIOSuite {
         effective =>
           expect.same(None, effective.facilitatorSelectionMax) &&
             expect.same(Some(3), effective.coreCommitteeSize) &&
-            expect.same(0, effective.quorumShrinkActivationViews) &&
             expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
             expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(3, effective.activeAdmissionRecentSignerWindow) &&
             expect.same(cfg.snapshot.consensus.activeFacilitatorTarget, effective.activeFacilitatorTarget) &&
             expect.same(cfg.snapshot.consensus.activeFacilitatorMax, effective.activeFacilitatorMax)
+      )
+    }
+  }
+
+  test("certified consensus is active from genesis off mainnet and pinned to a placeholder on mainnet") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val activation = cfg.snapshot.certifiedConsensusActivationOrdinal.view.mapValues(_.value.value).toMap
+
+      expect.same(
+        Map(
+          AppEnvironment.Mainnet -> 9999999L,
+          AppEnvironment.Testnet -> 0L,
+          AppEnvironment.Integrationnet -> 0L,
+          AppEnvironment.Dev -> 0L
+        ),
+        activation
       )
     }
   }

@@ -84,7 +84,8 @@ else
   fi
 
   # Snapshot Streaming re-derives Global state proofs, so its selector must honor the
-  # same per-sub-trie-root activation as GL0. Keep this patch separate from the API
+  # same per-sub-trie-root activation as GL0. The patch also reads the legacy state-proof and
+  # incremental-staking boundaries through the *For accessors (derived from the v4.1 cutover). Keep this patch separate from the API
   # compatibility patch above: release branches can absorb those API edits at different
   # times, but silently omitting a signed-proof era is never an acceptable fallback.
   STATE_PROOF_PATCH_FILE="$SS_DIR/snapshot-streaming-state-proof.patch"
@@ -106,9 +107,10 @@ else
     exit 1
   fi
 
-  # Develop's UpdateDelegatedStakeAcceptanceManager.make requires the resolved
-  # fixing-delegated-stake-double-withdrawal ordinal (#1593). Snapshot Streaming must wire the
-  # same gate it replays, so apply-or-fail like the state-proof patch; skip once upstream absorbs it.
+  # Develop's UpdateDelegatedStakeAcceptanceManager.make requires the resolved unique-settlement
+  # ordinal (#1593, fixingDelegatedStakeDoubleWithdrawalFor = the tessellation-41-migration cutover).
+  # Snapshot Streaming must wire the same gate it replays, so apply-or-fail like the state-proof
+  # patch; skip once upstream absorbs it.
   DELEGATED_WITHDRAWAL_PATCH_FILE="$SS_DIR/snapshot-streaming-delegated-withdrawal.patch"
   if [ -f "$DELEGATED_WITHDRAWAL_PATCH_FILE" ] && [ -s "$DELEGATED_WITHDRAWAL_PATCH_FILE" ]; then
     cd "$BUILD_DIR"

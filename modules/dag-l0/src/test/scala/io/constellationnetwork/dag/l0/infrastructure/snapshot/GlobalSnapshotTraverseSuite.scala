@@ -420,7 +420,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
         SnapshotOrdinal.MinValue,
-        SnapshotOrdinal.MinValue,
         mptStore,
         SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue

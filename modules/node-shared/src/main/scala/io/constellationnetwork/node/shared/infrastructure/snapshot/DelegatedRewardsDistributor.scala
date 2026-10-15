@@ -35,8 +35,7 @@ case class DelegatedRewardsResult(
   updatedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
   reservedAddressRewards: SortedSet[RewardTransaction],
-  withdrawalRewardTxs: SortedSet[RewardTransaction],
-  totalEmittedRewardsAmount: Amount
+  withdrawalRewardTxs: SortedSet[RewardTransaction]
 )
 
 case class PartitionedStakeUpdates(
@@ -213,35 +212,4 @@ object DelegatedRewardsDistributor {
       .map(pending => partitionedRecords.withdrawalSettlement.fold(pending)(_.removeSettled(pending)))
       .map(_.filterNot(_._2.isEmpty))
 
-  /** Settled withdrawal rewards were counted at accrual, not again as current-round issuance. */
-  def sumMintedAmountChecked[F[_]: Async](
-    reservedAddressRewards: SortedSet[RewardTransaction],
-    nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
-  ): F[Amount] =
-    Async[F].fromEither(
-      (reservedAddressRewards.toList.map(tx => Amount(tx.amount.value)) ++
-        nodeOperatorRewards.toList.map(tx => Amount(tx.amount.value)) ++
-        delegatorRewardsMap.valuesIterator.flatMap(_.valuesIterator).toList)
-        .foldM(Amount.empty)(_.plus(_))
-    )
-
-  def sumMintedAmount[F[_]: Async](
-    reservedAddressRewards: SortedSet[RewardTransaction],
-    nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
-  ): F[Amount] = {
-    val reservedEmittedAmount = reservedAddressRewards.toList.map(_.amount.value.value).sum
-    val validatorsEmittedAmount = nodeOperatorRewards.toList.map(_.amount.value.value).sum
-    val delegatorsEmittedAmount = delegatorRewardsMap.map(_._2.values.map(_.value.value).sum).sum
-    val totalEmitted = reservedEmittedAmount + validatorsEmittedAmount + delegatorsEmittedAmount
-    NonNegLong
-      .from(totalEmitted)
-      .bimap(
-        new IllegalArgumentException(_),
-        Amount(_)
-      )
-      .pure[F]
-      .flatMap(Async[F].fromEither(_))
-  }
 }

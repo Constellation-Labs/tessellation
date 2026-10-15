@@ -14,7 +14,6 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.consensus.ProposalValue
 import io.constellationnetwork.schema.peer.PeerId
@@ -31,7 +30,6 @@ import eu.timepit.refined.auto._
   * sidecar also cannot authenticate all of its derived operational fields, so it is never download authority. Every acceptance path begins
   * at one independently checkable public root:
   *
-  *   - the locally downloaded/state-proof-validated A-1 snapshot at ordinal-gated activation; or
   *   - the canonical signed first incremental snapshot when certification is active from genesis; or
   *   - the latest explicit recovery epoch, reconstructed from its first successor's ordinary QC after the second successor carries that QC
   *     publicly, plus the independently validated public parent selected by the permissioned recovery procedure.
@@ -158,83 +156,6 @@ object GlobalCertifiedDownloadValidator {
         } yield ()
     }
 
-  /** Reconstruct the activation parent's live consensus identity with the current hasher.
-    *
-    * State-proof validation remains ordinal-selected, and proposal parent links retain their historical V1 projection.
-    * `Finished.snapshotHash`, however, is produced by live consensus with the current hasher, so the exact-activation bridge must preserve
-    * that identity. Every public network crossed the Kryo-to-JSON boundary before v35; this bridge adds no Kryo fallback or new cross-era
-    * contract.
-    */
-  private[snapshot] def reconstructActivationParentFinished[F[_]: Async: HasherSelector](
-    snapshot: Signed[GlobalIncrementalSnapshot],
-    context: GlobalSnapshotInfo
-  ): F[Finished] =
-    HasherSelector[F].withCurrent { implicit hasher =>
-      GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value).map { snapshotHash =>
-        Finished(
-          snapshot,
-          context,
-          EventTrigger,
-          Candidates.empty,
-          Hash.empty,
-          snapshotHash
-        )
-      }
-    }
-
-  /** Resolve the only public root authorized for an ordinal-gated certified replay.
-    *
-    * The root is A-1, where A is the configured activation key. It is deliberately independent of the downloaded terminal key T; using T-1
-    * would make a missing private sidecar silently trust a certificate whose committee is named only by that certificate.
-    */
-  private[snapshot] def activationParentOrdinal(
-    activation: Long,
-    terminal: SnapshotOrdinal
-  ): Either[String, SnapshotOrdinal] =
-    if (activation <= 0L) "activation_parent_unavailable_at_genesis".asLeft
-    else if (activation > terminal.value.value) "activation_after_downloaded_candidate".asLeft
-    else SnapshotOrdinal.unsafeApply(activation - 1L).asRight
-
-  /** Authenticate the public A-1 artifact before its signed controller evidence can seed v35 authority.
-    *
-    * Snapshot storage's validated read proves the artifact/context state-proof relation, but a state proof does not authenticate the
-    * artifact's signature envelope. Keep signature and unique-signer checks at this authority boundary as well: a forged or locally
-    * corrupted A-1 file must not be able to name the first certified committee. The current mutable seedlist is deliberately not historical
-    * authority: live activation already ran the then-current join-fenced membership policy, and a later seedlist change must not invalidate
-    * the canonical signed root.
-    */
-  private[snapshot] def validateActivationRootArtifact[
-    F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider
-  ](
-    expectedOrdinal: SnapshotOrdinal,
-    snapshot: Signed[GlobalIncrementalSnapshot],
-    context: GlobalSnapshotInfo
-  )(implicit globalStateProofSelector: GlobalStateProofSelector): F[Either[String, Unit]] = {
-    val signerIds = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-    val signers = SortedSet.from(signerIds)
-    val proofOrdinal =
-      if (expectedOrdinal === SnapshotOrdinal.MinIncrementalValue) SnapshotOrdinal.MinValue else expectedOrdinal
-
-    if (snapshot.ordinal =!= expectedOrdinal) "activation_artifact_ordinal_mismatch".asLeft[Unit].pure[F]
-    else
-      HasherSelector[F].forOrdinal(expectedOrdinal) { implicit hasher =>
-        for {
-          signatureValid <- snapshot.hasValidSignature[F]
-          contextStateProof <- context.stateProof[F](proofOrdinal)
-        } yield
-          for {
-            _ <- Either.cond(signers.nonEmpty, (), "activation_artifact_proof_signers_empty")
-            _ <- Either.cond(signerIds.size === signers.size, (), "activation_artifact_duplicate_signer")
-            _ <- Either.cond(signatureValid, (), "activation_artifact_signature_invalid")
-            _ <- Either.cond(
-              contextStateProof === snapshot.value.stateProof,
-              (),
-              "activation_context_state_proof_mismatch"
-            )
-          } yield ()
-      }
-  }
-
   def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider: Metrics](
     config: ConsensusConfig,
     networkId: String,
@@ -251,9 +172,9 @@ object GlobalCertifiedDownloadValidator {
         .attempt
         .void
 
-    /** The independently validated activation/genesis artifact authenticates its canonical carried committee. The first certified round
-      * uses that exact set as both full and Core authority; live policy may change the following authority only through the first QC. A
-      * historical downloader therefore never needs the old seedlist, collateral policy, selector, or Core sizing implementation.
+    /** The independently validated genesis artifact authenticates its canonical carried committee. The first certified round uses that
+      * exact set as both full and Core authority; live policy may change the following authority only through the first QC. A historical
+      * downloader therefore never needs the old seedlist, collateral policy, selector, or Core sizing implementation.
       */
     def authorizedRootAuthority(
       trustedParent: GlobalConsensusOutcome
@@ -296,8 +217,8 @@ object GlobalCertifiedDownloadValidator {
       ordinal: SnapshotOrdinal
     ): F[Either[String, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
       // The first incremental derives its state proof from full-genesis ordinal 0, but its artifact/signatures still follow the hasher
-      // selected for ordinal 1. In development that is the current JSON hasher; preserving ordinal selection also keeps a hypothetical
-      // legacy activation-parent read honest instead of silently re-hashing historical bytes with the current scheme.
+      // selected for ordinal 1. In development that is the current JSON hasher; preserving ordinal selection keeps a historical read
+      // honest instead of silently re-hashing historical bytes with the current scheme.
       if (ordinal === SnapshotOrdinal.MinIncrementalValue)
         HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
           snapshotDownloadStorage
@@ -310,41 +231,6 @@ object GlobalCertifiedDownloadValidator {
             .readCombinedValidatedAtProofOrdinal(ordinal, ordinal)
             .map(_.toRight(s"trusted_snapshot_missing:${ordinal.value.value}"))
         }
-
-    def exactActivationParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
-      val activation = config.certifiedConsensusActivationKey
-
-      activationParentOrdinal(activation, candidate.key) match {
-        case Left(error) => error.asLeft[TrustedParent].pure[F]
-        case Right(parentOrdinal) =>
-          val activationKey = SnapshotOrdinal.unsafeApply(activation)
-
-          locallyValidatedSnapshot(parentOrdinal).flatMap {
-            case Left(error) => error.asLeft[TrustedParent].pure[F]
-            case Right((snapshot, context)) =>
-              validateActivationRootArtifact(parentOrdinal, snapshot, context).flatMap(_.traverse { _ =>
-                for {
-                  finished <- reconstructActivationParentFinished[F](snapshot, context)
-                  proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                  legacy = GlobalConsensusOutcome(
-                    key = parentOrdinal,
-                    facilitators = Facilitators(proofSigners),
-                    removedFacilitators = RemovedFacilitators.empty,
-                    withdrawnFacilitators = WithdrawnFacilitators.empty,
-                    eligibleFacilitators = EligibleFacilitators(proofSigners),
-                    finished = finished
-                  )
-                  reset <- HasherSelector[F].withCurrent(implicit hasher =>
-                    GlobalSnapshotConsensusStateCreator
-                      .resetLegacyOutcomeForHistoricalReplay[F](activationKey, legacy)
-                  )
-                  trusted <- HasherSelector[F].withCurrent(implicit hasher => trustedParentFromOutcome(reset))
-                  result <- trusted.leftMap(new IllegalStateException(_)).liftTo[F]
-                } yield result
-              })
-          }
-      }
-    }
 
     def canonicalGenesisRoot: F[Either[String, TrustedParent]] =
       locallyValidatedSnapshot(CertifiedConsensusGenesis.FirstIncrementalOrdinal).flatMap {
@@ -361,9 +247,16 @@ object GlobalCertifiedDownloadValidator {
           }
       }
 
+    /** Without a later public recovery boundary, only certified-from-genesis has an ordinary root. A non-genesis activation is entered
+      * exclusively through the env recovery seed (rollback anchor R >= activation), whose first successor carries no lineage and is found
+      * by `latestPublicRecoveryRoot`. There is no legacy-engine bridge to reconstruct an exact activation parent.
+      */
     def replayRoot(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] =
       if (CertifiedConsensusGenesis.isActiveFromGenesis(config.certifiedConsensusActivationKey)) canonicalGenesisRoot
-      else exactActivationParent(candidate)
+      else
+        s"certified_recovery_root_required:activation=${config.certifiedConsensusActivationKey}:candidate=${candidate.key.value.value}"
+          .asLeft[TrustedParent]
+          .pure[F]
 
     def loadPublicRound(
       ordinal: SnapshotOrdinal,

@@ -4,7 +4,7 @@ Date: 2026-07-27
 
 ## Status
 
-Accepted
+Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -54,3 +54,20 @@ accidental retroactive activation during replay.
   wallet.
 - Duplicate/orphan fee mapping, replay policy, aggregate bundle debits, and configurable split
   recipients remain separate changes.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+- The `fee-transaction-security` gate is folded into the v4.1 cutover
+  `fields-added-ordinals.tessellation-41-migration` (C); `feeTransactionSecurityFor` resolves to C.
+  The decision above applies from C. Mainnet sets C at the v3.5 -> v4.1 cutover; dev, testnet and
+  integrationnet use `0` (fresh genesis). The IntegrationNet `5880000` activation above describes
+  history that no longer exists.
+- Mainnet already verifies fee proofs below C. release/mainnet #1577 is ported: from
+  `fixing-data-application-fee-validation` (mainnet `6818000`) every proof is verified against the
+  transaction bytes (proof-count cap included) and every proof must still belong to the source
+  wallet; co-signers are not allowed until C.
+- `FeeTransactionValidator.validate` now takes a `FeeTransactionSignerPolicy` instead of a Boolean:
+  `LegacyExclusiveSource` below 6818000 (proof ids must map to the source; bytes not verified),
+  `VerifiedExclusiveSource` from 6818000, and `VerifiedSourceAuthorized` from C. This changes an
+  SDK-visible interface (ADR-0035 class 3), so the "does not change the metagraph framework API"
+  statement above no longer holds for code that implements or calls this validator directly.

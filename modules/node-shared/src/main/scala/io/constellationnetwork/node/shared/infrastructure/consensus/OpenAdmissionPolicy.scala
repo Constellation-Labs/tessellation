@@ -81,26 +81,15 @@ object OpenAdmissionPolicy {
     PreProposalGraceDecision(effectiveGrace, hasAdmissionEvidence, shouldWait)
   }
 
-  /** Keep singleton bootstrap able to grow, but enforce headroom on the admission batch that reaches the proof threshold where
-    * full-committee finality can activate. Without this edge gate, one signer could admit a third seat and immediately create a
-    * two-signature floor.
+  /** Certified rounds always enforce next-seat headroom on admissions, except the exact first 1 -> 2 expansion of a certified-from-genesis
+    * singleton lineage, which cannot prove headroom for a seat that does not exist yet.
     */
   def headroomRequired(
-    certifiedConsensusActive: Boolean,
     allowSingletonBootstrapExpansion: Boolean,
-    bootstrapActive: Boolean,
     currentCommitteeSize: Int,
-    maxAdmissionSeats: Int,
-    bootstrapCompleteProofsThreshold: Int
-  ): Boolean = {
-    val batchSize = math.max(1, maxAdmissionSeats)
-    val threshold = math.max(1, bootstrapCompleteProofsThreshold)
-    val exactSingletonExpansion =
-      allowSingletonBootstrapExpansion && currentCommitteeSize == 1 && batchSize == 1
-
-    !exactSingletonExpansion &&
-    (certifiedConsensusActive || !bootstrapActive || currentCommitteeSize + batchSize >= threshold)
-  }
+    maxAdmissionSeats: Int
+  ): Boolean =
+    !(allowSingletonBootstrapExpansion && currentCommitteeSize == 1 && math.max(1, maxAdmissionSeats) == 1)
 
   /** The five-round cadence applies only to open expansion. A peer in the existing penalty/probation recovery lane remains
     * certificate-eligible on every round.

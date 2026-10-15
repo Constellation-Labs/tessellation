@@ -9,6 +9,14 @@ checklist an operator follows at deploy, and (3) the raw `sys.env` toggles that 
 
 Ground truth is the code. Every claim below cites the source file and line it was verified against.
 
+> **Update 2026-10-10 (ADR-0035 / #1627):** no network carries v4 history any more. testnet and
+> integrationnet are fresh-genesised on v4.1 (every `fields-added-ordinals` threshold and
+> `snapshot.certified-consensus-activation-ordinal` is `0`, like dev), so for them this is a genesis
+> launch, not a checkpoint restart. Only mainnet replays signed v3.5 history; it enters v4.1 at a
+> single cutover through the recovery-seed rollback described in section 2. Every v4.1-only gate was
+> folded into `tessellation-41-migration`, so the per-gate checklist below collapses to two
+> ordinals. See [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md).
+
 ---
 
 ## 1. Why a coordinated cold restart is mandatory
@@ -39,7 +47,8 @@ artifact because a different jar built with the same reported version is not rej
   Tessellation version-hash join fence. The upgrade is all-or-nothing. This check applies at join
   time; it does not evict an already-connected old process, so the entire fleet must be stopped
   before any new process starts.
-- **Restart from a checkpoint, not genesis.** Genesis replay is never performed. The cluster restarts
+- **Restart from a checkpoint, not genesis (mainnet).** Genesis replay is never performed on mainnet;
+  testnet and integrationnet start the v4.1 line from a fresh genesis. The cluster restarts
   from a recent agreed snapshot ordinal that all source/priority nodes hold on disk. Already-signed
   history is preserved; the new jar must re-derive it byte-identically (this is what the ordinal gates in
   section 2 guarantee).
@@ -65,7 +74,7 @@ artifact because a different jar built with the same reported version is not rej
 3. Confirm the launch jar is staged on every node and that the gate-ordinal checklist (section 2) has
    been completed in the jar-packaged config before assembly.
 4. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
-   in `application.conf:129`. `Ready` confirms only node lifecycle progress; it
+   in `application.conf`. `Ready` confirms only node lifecycle progress; it
    does not release the monitoring gate.
 5. Bring up the remaining peers. They register against the priority peers; matching version hashes
    admit them. Independently verify the deterministic config hash is byte-identical fleet-wide.
@@ -90,74 +99,60 @@ already-signed history re-derives byte-identically. The mechanism is `FieldsAdde
 These values are literals packaged into the assembly jar's `application.conf`; there are no
 environment-variable overrides for `fields-added-ordinals`. They must be finalized before assembly,
 and changing one requires a coordinated artifact redeploy rather than a runtime config update.
-`FieldsAddedOrdinals` is not included in `deterministicConfigHash`, and
-`RegistrationRequest.jar` is not compared, so the handshake does not detect a wrong ordinal.
+Both L0 applications fold every resolved threshold, the dust-sweep schedule and the derived
+state-proof/staking boundaries into `deterministicConfigHash` (`SnapshotOrdinalConfig.ordinalConfigHashFor`,
+`config/types.scala`), so a peer whose resolved values differ is rejected at join. A unanimously wrong
+ordinal is not detected; `RegistrationRequest.jar` is not compared.
 
 > **The cardinal rule, stated once:** an ordinal gate must be set so the chain crosses it **only after**
 > the new jar is live cluster-wide. A too-early crossing on the old jar misses the gated behaviour. For
 > the dust sweep specifically, a missed sweep is not re-attempted until a rollback re-crosses the ordinal
-> (`application.conf:283-285`).
+> (the `dust-sweeps` comment in `application.conf`).
 
 A placeholder value of **9999999** means "keep the OLD path until that finite ordinal is reached". Leaving
 a placeholder in place at launch silently keeps the pre-fix behaviour active.
 
 ### Checklist
 
-Work through every `fields-added-ordinals` sub-key whose mainnet (or target-environment) value is still a
-placeholder. For each, decide the launch-checkpoint ordinal and set it in the jar-packaged
-`application.conf` before assembly.
+testnet, integrationnet and dev need no gate edits: every threshold is `0` and
+`FieldsAddedOrdinalsSuite` asserts it. For mainnet, every v4.1-only replay/state-transition rule is
+selected by ONE cutover gate C, `fields-added-ordinals.tessellation-41-migration`. The former
+separate gates `sub-trie-roots`, `fee-transaction-security`, `currency-snapshot-protocol-v1`,
+`fixing-delegated-stake-double-withdrawal` and `fixing-spend-action-aggregate-balance` are folded
+into it (their `...For` accessors resolve to C); `last-legacy-state-proof-ordinal` and
+`incremental-delegated-staking-starting-ordinal` are no longer keys and are derived as `C - 1`. The
+gates `sc-fee-balance-from-context`, `set-sum-fix` and `delegated-rewards-full-committee` were deleted,
+and no dust sweep is scheduled on any network (`dust-sweeps {}`).
 
-- [ ] **`sc-fee-balance-from-context`** (`application.conf:275-280`, `config/types.scala:42`). At/after
-      this ordinal the state-channel fee-affordability check reads the metagraph owner balance from the
-      deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix
-      `mptStore.getBalance` path, so signed history re-derives byte-identically
-      (`GlobalSnapshotStateChannelEventsProcessor.scala:324-328`). The ordinal is resolved at
-      `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`, both **failing closed** to
-      `SnapshotOrdinal.MaxValue` when the environment has no entry (the gate never fires, so an unset env
-      keeps the OLD path). **mainnet is a `9999999` placeholder; testnet is pinned to `3101393`, its
-      real v4.0.0->alpha.0 cutover; IntegrationNet is scheduled for `5880000`.** SET mainnet to its
-      coordinated context-deploy ordinal at deploy. Leaving an env unset
-      keeps the pre-fix `mptStore` balance source.
+Let R be the final v3.5 global snapshot ordinal (the rollback anchor). Set exactly two values, both
+`9999999` placeholders today:
 
-- [ ] **`sub-trie-roots`** (`application.conf:285-294`, `config/types.scala:43-46`). At/after this
-      ordinal, MPT-format `GlobalSnapshotStateProof` carries per-`GlobalStateFieldId` roots in addition
-      to the overall `mptRoot`, making state-root divergence field-localizable. This changes signed proof
-      bytes. Mainnet and testnet remain `9999999` placeholders; IntegrationNet is scheduled for
-      `5880000` and MUST have compatible snapshot-streaming deployed before crossing it. For a restart
-      checkpoint `N`, use `N + 1`.
+- [ ] **`snapshot.certified-consensus-activation-ordinal.mainnet = R`** (`dag-l0.conf`). Exact key;
+      it must be <= the rollback anchor (recovery-seed startup rejects an anchor below activation,
+      `Main.validateRollbackAnchorAtOrAfterActivation`). This build has no pre-v35 Global L0 engine: a
+      node refuses to produce a round below activation
+      (`GlobalSnapshotConsensusStateCreator.CertifiedConsensusNotActiveForProduction`) and refuses to
+      start without an activation entry for its environment.
+- [ ] **`fields-added-ordinals.tessellation-41-migration.mainnet = R + 1`** (node-shared
+      `application.conf`). R itself replays with v3.5 rules; R + 1 is the first v4.1 snapshot.
+- [ ] **Sanity-check the historical gates.** Every other mainnet value in `fields-added-ordinals`
+      (`tessellation-3-migration` through `fixing-global-allow-spend-expiration`, plus
+      `removing-processed-delegated-stake-withdrawals` = `6176655`) records where a rule entered signed
+      mainnet history. Confirm they are unchanged from the in-tree values; an accidental edit changes
+      replay at that boundary and forks.
 
-- [ ] **`dust-sweeps`** (`application.conf:295-301`, `config/types.scala:47-65`). Per-environment,
-      keyed by the exact ordinal each one-time GSI dust sweep fires at. Only `testnet` has an entry today
-      (`3154700` with `threshold: 100000`); there is **no mainnet entry**. If a sweep is part of the
-      launch, add the environment's entry and **finalize the ordinal right before deploy** so it is one
-      the chain reaches only after the deflating jar is live cluster-wide (`application.conf:283-285`).
-      The sweep is consensus-critical: every node must compute the identical swept GSI and MPT root at the
-      sweep ordinal (`GlobalSnapshotDustSweep.scala:16-26`). Burn = omit `collection-address`; credit a
-      treasury = supply `collection-address: "DAG..."`. `threshold` is in datum.
+### Mainnet cutover procedure (recovery seed)
 
-- [ ] **`set-sum-fix`** (`config/types.scala`). Mainnet and testnet remain the placeholder `9999999`;
-      IntegrationNet is scheduled for `5880000`; `dev` is `0`. Confirm the target value is still in the
-      future before assembling the launch jar.
+From the `certified-consensus-activation-ordinal` comment in `dag-l0.conf`:
 
-- [ ] **`fixing-allow-spend-and-token-lock-validation`** (`application.conf:259-264`,
-      `config/types.scala`). mainnet is already a real ordinal (`5058096`); testnet remains the
-      placeholder `9999999`; IntegrationNet is scheduled for `5880000`.
-
-- [ ] **`delegated-rewards-full-committee`**. At/after this ordinal, delegated rewards go to the
-      complete frozen Core + Tier-1 committee. IntegrationNet is scheduled for `5880000`; mainnet and
-      testnet remain `9999999`.
-
-- [ ] **`fee-transaction-security`**. At/after this global ordinal, metagraph data-update fees require
-      exact source-wallet signatures on every accepted path. IntegrationNet is scheduled for
-      `5880000`; Mainnet and Testnet remain at `9999999`. Every Currency L1 and ML0 node must run the
-      new jar before IntegrationNet crosses the gate.
-
-- [ ] **Sanity-check the historical gates** (`application.conf:211-258`). The migration gates above this
-      block (`tessellation-3-migration`, `tessellation-301-migration`, `check-sync-global-snapshot-field`,
-      `metagraph-sync-data`, the two `updated-last-sync-*`, `updating-combine-function-spend-actions`,
-      `fixing-allow-spend-expiration`) already carry real per-environment ordinals. Confirm they are
-      unchanged from the in-tree values for the environment being launched; an accidental edit changes
-      artifact bytes at that boundary and forks.
+1. Halt v3.5 and confirm the source nodes share tip R and its hash.
+2. Start the lead source node with `run-rollback --rollback-hash H(R)` and the other sources with
+   `run-validator`, all with `CL_GL0_RECOVERY_SEED_COMMITTEE` set to the source-node committee.
+3. Wait until R + 1 is certified, R + 2 carries its QC and
+   `dag_consensus_recovery_seed_boundary_publicly_durable == 1`.
+4. Unset `CL_GL0_RECOVERY_SEED_COMMITTEE` on the sources (it re-arms on every fresh JVM).
+5. Community validators re-join through ordinary download (validated from the public recovery root)
+   and certified open admission; they do not sign or earn until admitted.
 
 After editing, the values are compiled into the assembly. Re-assemble the jar and independently
 verify that the identical artifact digest is staged everywhere; the join handshake does not perform
@@ -188,4 +183,5 @@ Both compare case-insensitively against `"true"` (`GlobalSnapshotAcceptanceManag
 - `docs/release/RELEASE_POLICY.md` -- stage gating; ordinal feature-flag config surface.
 - `docs/consensus/README.md` -- consensus mechanism reference (FSM, declarations, facilitator selection,
   `deterministicConfigHash` fold).
-- Source of truth for the gates: `config/types.scala:27-48` and `application.conf:210-293`.
+- Source of truth for the gates: `FieldsAddedOrdinals` in `config/types.scala` and the `fields-added-ordinals`
+  block in `application.conf`; cutover detail in `docs/operations/fields-added-ordinals.md`.

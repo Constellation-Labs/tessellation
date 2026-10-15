@@ -13,7 +13,6 @@ import scala.concurrent.duration.{FiniteDuration, _}
 import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
-import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
@@ -30,7 +29,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Admis
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, IWantRequest}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
@@ -384,20 +383,9 @@ object GlobalSnapshotConsensusStateAdvancer {
       override def isBootstrapActive(lastOutcome: GlobalConsensusOutcome): Boolean =
         !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
 
-      // v33 quorum-denominator shrink anchors (see QuorumDenominatorShrink). Both are
-      // consensus-agreed outcome fields: the latest controllerEvidence entry's canonical
-      // completedSigners and the parent round's facility-median consensusEndTime.
-      override protected def latestEvidenceSigners(lastOutcome: GlobalConsensusOutcome): Option[SortedSet[PeerId]] =
-        lastOutcome.controllerEvidence.flatMap(_.lastOption).map { case (_, entry) => entry.completedSigners }
-
-      override protected def lastOutcomeEndTimeMs(lastOutcome: GlobalConsensusOutcome): Option[Long] =
-        lastOutcome.recentRoundEndTimes.lastOption.map { case (_, endTime) => endTime }
-
-      // v4.1.0 cluster-majority floor: enable the committee-supermajority finality floor outside bootstrap
-      // (see QuorumDenominatorShrink.decide / ConsensusStateAdvancer.clusterFloorActive). isInBootstrap is
-      // derived from consensus-agreed recentProofSizes, so this is deterministic across nodes.
-      override protected def clusterFloorActive(state: GlobalSnapshotConsensusState): Boolean =
-        state.certifiedConsensusActive || !isInBootstrap(state)
+      // Certified consensus always applies the committee-supermajority finality floor over the frozen round committee
+      // (see FinalityQuorum / ConsensusStateAdvancer.clusterFloorActive), including during bootstrap.
+      override protected def clusterFloorActive(state: GlobalSnapshotConsensusState): Boolean = true
 
       private def deriveGlobalOutcomeState(
         state: GlobalSnapshotConsensusState,
@@ -819,17 +807,15 @@ object GlobalSnapshotConsensusStateAdvancer {
               recentRoundEndTimes = newRecentRoundEndTimes,
               controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
               penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None,
-              expandedBeyondSingleton = Option
-                .when(state.certifiedConsensusActive)(
-                  CertifiedConsensusGenesis.nextExpandedBeyondSingleton(
-                    config.certifiedConsensusActivationKey,
-                    state.lastOutcome.key,
-                    state.lastOutcome.facilitators.value.size,
-                    state.lastOutcome.expandedBeyondSingleton,
-                    nextCommittee.size
-                  )
+              expandedBeyondSingleton = CertifiedConsensusGenesis
+                .nextExpandedBeyondSingleton(
+                  config.certifiedConsensusActivationKey,
+                  state.lastOutcome.key,
+                  state.lastOutcome.facilitators.value.size,
+                  state.lastOutcome.expandedBeyondSingleton,
+                  nextCommittee.size
                 )
-                .orElse(state.lastOutcome.expandedBeyondSingleton)
+                .some
             ).some
         }
       }
@@ -1192,12 +1178,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         countdown ++ absolute
       }
 
-      private def certifiedConsensusActive(state: GlobalSnapshotConsensusState): Boolean =
-        state.certifiedConsensusActive
-
       private def allowsSingletonGenesisBootstrapExpansion(state: GlobalSnapshotConsensusState): Boolean =
         CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
-          state.certifiedConsensusActive,
           config.certifiedConsensusActivationKey,
           state.roundStartFacilitators.value.size,
           CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
@@ -1233,7 +1215,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def currentViewCertifiedQc(
         state: GlobalSnapshotConsensusState
       ): F[Either[String, Option[CertifiedProposalQC]]] =
-        if (!certifiedConsensusActive(state) || state.viewNumber <= state.initialViewNumber)
+        if (state.viewNumber <= state.initialViewNumber)
           none[CertifiedProposalQC].asRight[String].pure[F]
         else
           for {
@@ -1550,7 +1532,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             now,
             firstEcsSeenAt,
             AdmissionPreProposalGrace,
-            requiresPair = membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) && ecs.nonEmpty,
+            requiresPair = membershipPolicy.allowsCertifiedAtomicReplacement && ecs.nonEmpty,
             hasApplicableAdmissionCertificate = hasPairableOpenCertificate
           )
           _ <- Metrics[F].updateGauge(
@@ -1626,7 +1608,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         assembledAdmissions: Set[AdmissionCertificate]
       ): F[(List[EvictionCertificate], List[AdmissionCertificate])] = {
         val atomicReplacementActive =
-          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+          membershipPolicy.allowsCertifiedAtomicReplacement
         val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val openAllowed = openExpansionAllowedAt(state)
         val pairableSilentEvictions = assembledEvictions.exists(_.reason === EvictionReason.Silent)
@@ -1695,39 +1677,33 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         facilities: SortedMap[PeerId, Facility]
       ): F[Option[Transition]] = {
-        val (candidates, triggers) = facilities.foldMap(f => (f.candidates.value, f.trigger.toList))
+        val candidates = facilities.foldMap(_.candidates.value)
 
         // Compute hash UNION - include events ANY facilitator has, then sync missing
         val allHashSets = facilities.values.map(_.eventHashes).toList
         val unionHashes = allHashSets.reduceOption(_ union _).getOrElse(Set.empty[Hash])
 
-        val legacyTrigger = pickMajority(triggers).getOrElse(EventTrigger)
         val triggerSelection: F[Either[String, (List[Signed[CertifiedConsensus.TriggerStatement]], ConsensusTrigger)]] =
-          if (certifiedConsensusActive(state))
-            HasherSelector[F].withCurrent { implicit hasher =>
-              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
-                CertifiedConsensus.selectTriggerEvidence[F](
-                  facilities,
-                  CertifiedConsensus.ConsensusDomain.DagL0,
-                  networkId,
-                  state.key.value.value,
-                  state.lastOutcome.finished.snapshotHash,
-                  roundStartHash,
-                  config.deterministicConfigHash,
-                  state.roundStartFacilitators.value.toSet,
-                  CertifiedConsensus.requiredArtifactQuorum(
-                    state.roundStartFacilitators.value.size,
-                    state.coreFacilitators.value.size,
-                    config.quorumThresholdFraction
-                  ),
-                  state.leader
-                )
-              }
+          HasherSelector[F].withCurrent { implicit hasher =>
+            state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+              CertifiedConsensus.selectTriggerEvidence[F](
+                facilities,
+                CertifiedConsensus.ConsensusDomain.DagL0,
+                networkId,
+                state.key.value.value,
+                state.lastOutcome.finished.snapshotHash,
+                roundStartHash,
+                config.deterministicConfigHash,
+                state.roundStartFacilitators.value.toSet,
+                CertifiedConsensus.requiredArtifactQuorum(
+                  state.roundStartFacilitators.value.size,
+                  state.coreFacilitators.value.size,
+                  config.quorumThresholdFraction
+                ),
+                state.leader
+              )
             }
-          else
-            (List.empty[Signed[CertifiedConsensus.TriggerStatement]], legacyTrigger)
-              .asRight[String]
-              .pure[F]
+          }
 
         // v7: leader's positive observation of which round-start facilitators sent a Facility
         // declaration this round. Includes self defensively; the exact Facility side effect stores
@@ -2056,10 +2032,6 @@ object GlobalSnapshotConsensusStateAdvancer {
             "detail" -> contextDigest(context)
           )
 
-          // Leader-side vote-lock safety: if we are locked on a prior QC hash and about to propose
-          // a different hash, abort and let the next view handle it. This prevents the leader from
-          // proposing a new hash while a previous-view proposal commitment still stands.
-          leaderLock <- consensusStorage.getVoteLock(state.key)
           // Stale-VCC suppression: only fetch when the round has advanced past the seed view.
           // `clearResourcesPreservingDeclarations` preserves `assembledVccR` across retries; without
           // gating the fetch, a seed view > 0 round could embed/consult a stale cert from a prior
@@ -2091,16 +2063,12 @@ object GlobalSnapshotConsensusStateAdvancer {
           // the fetch gate above -- only enforce when post-seed.
           vccMismatch = isLeader && state.viewNumber > state.initialViewNumber && vccHighestQc.exists(_.proposalHash =!= hash)
           tcMismatch = isLeader && state.viewNumber > state.initialViewNumber && tcHighestQc.exists(_.proposalHash =!= hash)
-          carriedCertifiedQcResult <-
-            if (certifiedConsensusActive(state))
-              HasherSelector[F].withCurrent { implicit hasher =>
-                highestCertifiedQc(state, maybeAssembledVcc, maybeTimeoutCertificate)
-              }
-            else none[CertifiedProposalQC].asRight[String].pure[F]
+          carriedCertifiedQcResult <- HasherSelector[F].withCurrent { implicit hasher =>
+            highestCertifiedQc(state, maybeAssembledVcc, maybeTimeoutCertificate)
+          }
           carriedCertifiedQc = carriedCertifiedQcResult.toOption.flatten
           certifiedQcSelectionError = carriedCertifiedQcResult.fold(_.some, _ => none[String])
-          certifiedValueMismatch =
-            certifiedConsensusActive(state) && isLeader && carriedCertifiedQc.exists(_.value.artifactHash =!= hash)
+          certifiedValueMismatch = isLeader && carriedCertifiedQc.exists(_.value.artifactHash =!= hash)
           // Missing VCC at view > 0 is normally a race (VCC was cleared between assembly and
           // proposal build) -- but if Core has degenerated to a single peer there is no quorum
           // to assemble from, so no VCC is achievable. Suppress the abort in that case: the
@@ -2117,23 +2085,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           isRoundStartView = state.viewNumber === state.initialViewNumber
           viewCertMissing =
             isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && maybeTimeoutCertificate.isEmpty && !isSoloCore && !isRoundStartView
-          aborted = (isLeader && leaderLock
-            .flatMap(_.lockedQc)
-            .exists(
-              _.proposalHash =!= hash
-            )) || vccMismatch || tcMismatch || certifiedQcSelectionError.nonEmpty || certifiedValueMismatch || viewCertMissing
-          _ <- ConsensusLog
-            .warn(
-              logger,
-              Category.Validation,
-              state.key.show,
-              role,
-              Event.WithdrawValidationFail,
-              "reason" -> "leader_locked_on_different_qc",
-              "lockedQcHash" -> leaderLock.flatMap(_.lockedQc).map(_.proposalHash.show.take(8)).getOrElse("none"),
-              "proposingHash" -> hash.show.take(8)
-            )
-            .whenA(isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash))
+          aborted = vccMismatch || tcMismatch || certifiedQcSelectionError.nonEmpty || certifiedValueMismatch || viewCertMissing
           _ <- ConsensusLog
             .warn(
               logger,
@@ -2230,7 +2182,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             none
           )
           freshProposedValueResult <-
-            if (isLeader && !aborted && certifiedConsensusActive(state) && carriedCertifiedQc.isEmpty)
+            if (isLeader && !aborted && carriedCertifiedQc.isEmpty)
               HasherSelector[F].withCurrent { implicit hasher =>
                 proposalValueFor(
                   state,
@@ -2320,7 +2272,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             if (alreadyWithdrawn)
               none[Transition].pure[F]
-            else if (certifiedConsensusActive(state) && status.acceptedValue.nonEmpty)
+            else if (status.acceptedValue.nonEmpty)
               advanceAcceptedCertifiedValue(state, status, resources)
             else {
               val leader = state.leader
@@ -2652,18 +2604,14 @@ object GlobalSnapshotConsensusStateAdvancer {
         * dag-l0 and currency-l0 advancers cannot drift on consensus-adjacent logic. See the helper's scaladoc for the full branch summary;
         * ProposalVccValidatorSuite pins every positive/negative path including the alpha.90 P0 #1 seed-view bypass and the alpha.90 issue 2
         * stale-VCC view-mismatch gate.
-        *
-        * Effectful since v33: the shared quorum-denominator-shrink decision (wall-clock anchored, see `QuorumDenominatorShrink`) is derived
-        * per validation so a follower accepts a shrunken-quorum VCC/TC exactly when the escalation predicate holds, independent of any
-        * local retry counters.
         */
       private def validateProposalVcc(
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
       ): F[Either[ProposalRejection, Unit]] =
-        quorumShrinkDecision(state).map { shrinkDecision =>
-          ProposalVccValidator.validate(
+        ProposalVccValidator
+          .validate(
             proposalView = proposal.view,
             proposalHash = proposal.hash,
             proposalVcc = proposal.vcc,
@@ -2672,15 +2620,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             coreSize = state.coreFacilitators.value.size,
             facilitatorsHash = facilitatorsHash,
             lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
-            eligibleFacilitators = state.eligibleFacilitators.value.toSet,
-            roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-            peerQuality = state.lastOutcome.peerQuality.toMap,
-            quorumThresholdFraction = config.quorumThresholdFraction,
-            minParticipationObservations = config.minParticipationObservations,
-            quorumShrink = Some(shrinkDecision),
-            certifiedCore = Option.when(state.certifiedConsensusActive)(state.coreFacilitators.value.toSet)
+            certifiedCore = state.coreFacilitators.value.toSet,
+            quorumThresholdFraction = config.quorumThresholdFraction
           )
-        }
+          .pure[F]
 
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
       // has not yet produced a snapshot with >= bootstrapCompleteProofsThreshold signers, the
@@ -2703,7 +2646,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         facilitatorsHash: Hash
       ): Either[ProposalRejection, Unit] = {
         val atomicReplacement =
-          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) &&
+          membershipPolicy.allowsCertifiedAtomicReplacement &&
             proposal.evictionCertificates.nonEmpty &&
             proposal.evictionCertificates.size === proposal.admissionCertificates.size
         if (!membershipPolicy.acceptsEvictionCertificates && !atomicReplacement && proposal.evictionCertificates.nonEmpty)
@@ -2823,24 +2766,21 @@ object GlobalSnapshotConsensusStateAdvancer {
         val admitted = proposal.admissionCertificates.map(_.targetPeer)
         val evicted = proposal.evictionCertificates.map(_.targetPeer)
 
-        if (!state.certifiedConsensusActive && evicted.nonEmpty)
-          Left(ProposalRejection("certified_membership_replacement_requires_v35"))
-        else
-          CertifiedMembershipTransition
-            .validateReplacementAdmissionLane(
-              admitted.toSet,
-              evicted.toSet,
-              ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+        CertifiedMembershipTransition
+          .validateReplacementAdmissionLane(
+            admitted.toSet,
+            evicted.toSet,
+            ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+          )
+          .flatMap(_ =>
+            CertifiedMembershipTransition.validateCertificateTargets(
+              state.roundStartFacilitators.value.toSet,
+              admitted,
+              evicted,
+              config.activeAdmissionMaxExpansionPerRound
             )
-            .flatMap(_ =>
-              CertifiedMembershipTransition.validateCertificateTargets(
-                state.roundStartFacilitators.value.toSet,
-                admitted,
-                evicted,
-                config.activeAdmissionMaxExpansionPerRound
-              )
-            )
-            .leftMap(ProposalRejection(_))
+          )
+          .leftMap(ProposalRejection(_))
       }
 
       /** Verify every `Signed[EvictionVote]` inside every embedded `EvictionCertificate` has a valid cryptographic signature. Mirrors
@@ -2892,7 +2832,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // Integer math via `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
         val requiresCoreAdmissionCertification =
-          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+          membershipPolicy.allowsCertifiedAtomicReplacement
         val q = AdmissionVoterPool.requiredQuorum(
           n,
           config.quorumThresholdFraction,
@@ -3180,39 +3120,36 @@ object GlobalSnapshotConsensusStateAdvancer {
             )
             .as(none[Transition])
         def resolveWithAuthorizedTrigger: F[Option[Transition]] =
-          if (!certifiedConsensusActive(state))
-            resolveLeaderProposalInner(state, status, resources, leaderProposal)
-          else
-            authorizeLeaderTrigger(state, leaderProposal).flatMap {
-              case Left(error) =>
-                ConsensusLog
-                  .warn(
-                    logger,
-                    Category.Validation,
-                    state.key.show,
-                    role,
-                    Event.ValidationFailed,
-                    "reason" -> s"trigger_evidence_validation:$error",
-                    "leader" -> ConsensusLog.pid(state.leader),
-                    "view" -> state.viewNumber.toString
-                  )
-                  .as(none[Transition])
-              case Right(authorizedTrigger) =>
-                // Authorization boundary: every downstream artifact/value derivation must read
-                // this evidence-authorized trigger, never the follower's local Facility subset.
-                resolveLeaderProposalInner(
-                  state,
-                  status.copy(majorityTrigger = authorizedTrigger),
-                  resources,
-                  leaderProposal
+          authorizeLeaderTrigger(state, leaderProposal).flatMap {
+            case Left(error) =>
+              ConsensusLog
+                .warn(
+                  logger,
+                  Category.Validation,
+                  state.key.show,
+                  role,
+                  Event.ValidationFailed,
+                  "reason" -> s"trigger_evidence_validation:$error",
+                  "leader" -> ConsensusLog.pid(state.leader),
+                  "view" -> state.viewNumber.toString
                 )
-            }
+                .as(none[Transition])
+            case Right(authorizedTrigger) =>
+              // Authorization boundary: every downstream artifact/value derivation must read
+              // this evidence-authorized trigger, never the follower's local Facility subset.
+              resolveLeaderProposalInner(
+                state,
+                status.copy(majorityTrigger = authorizedTrigger),
+                resources,
+                leaderProposal
+              )
+          }
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
             val afterVccSig: F[Option[Transition]] = leaderProposal.vcc match {
               case Some(vcc) =>
-                ProposalVccValidator.verifyVccSignatures[F](vcc, state.certifiedConsensusActive).flatMap {
+                ProposalVccValidator.verifyVccSignatures[F](vcc).flatMap {
                   case Left(reason) => logVccReject(reason)
                   case Right(_)     => resolveWithAuthorizedTrigger
                 }
@@ -3581,18 +3518,13 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         artifact: GlobalSnapshotArtifact
       )(implicit hasher: Hasher[F]): F[Either[String, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]] =
-        if (!state.certifiedConsensusActive)
-          Either
-            .cond(artifact.certifiedLineage.isEmpty, none[CertifiedConsensus.CertifiedLineageEvidenceV1], "pre_v35_lineage_present")
-            .pure[F]
-        else
-          CertifiedConsensus
-            .verifyCarriedParentOutcome[F](
-              artifact.certifiedLineage,
-              state.lastOutcome.finished.certifiedOutcome,
-              CertifiedConsensus.ConsensusDomain.DagL0,
-              config.quorumThresholdFraction
-            )
+        CertifiedConsensus
+          .verifyCarriedParentOutcome[F](
+            artifact.certifiedLineage,
+            state.lastOutcome.finished.certifiedOutcome,
+            CertifiedConsensus.ConsensusDomain.DagL0,
+            config.quorumThresholdFraction
+          )
 
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
@@ -3943,8 +3875,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           s"metagraphSync=${ctx.metagraphSyncData.map(_.size).getOrElse(0)}"
         ).mkString(" ")
 
-      /** Legacy and v35 share artifact revalidation, certificate validation, and proposal transport. Only the post-validation phase
-        * differs: legacy signs immediately; v35 first certifies the complete semantic value with frozen-Core prepare votes.
+      /** After artifact revalidation and certificate validation, certify the complete semantic value with frozen-Core prepare votes before
+        * any artifact signature.
         */
       private def acceptValidatedLeaderProposal(
         state: GlobalSnapshotConsensusState,
@@ -3953,43 +3885,28 @@ object GlobalSnapshotConsensusStateAdvancer {
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] =
-        if (!certifiedConsensusActive(state))
-          buildSignatureTransition(
-            state,
-            status,
-            majorityInfo,
-            List(leaderProposal.hash),
-            leaderProposal.vcc,
-            leaderProposal.timeoutCertificate,
-            leaderProposal.evictionCertificates,
-            leaderProposal.admissionCertificates,
-            leaderProposal.observedResponders,
-            leaderProposal.observedSelfHealth,
-            leaderProposal.admissionNominee
-          )
-        else
-          validateProposalValue(state, status, majorityInfo, leaderProposal).flatMap {
-            case Left(error) =>
-              ConsensusLog
-                .warn(
-                  logger,
-                  Category.Validation,
-                  state.key.show,
-                  ConsensusLog.role(selfId, state.leader),
-                  Event.ValidationFailed,
-                  "reason" -> s"certified_value_validation:$error",
-                  "leader" -> ConsensusLog.pid(state.leader),
-                  "view" -> leaderProposal.view.toString
-                )
-                .as(none[Transition])
-            case Right((value, carriedQc)) =>
-              val accepted = status.copy(
-                proposalArtifactInfo = majorityInfo,
-                candidates = Candidates(value.admissionNominee.toSet),
-                acceptedValue = value.some
+        validateProposalValue(state, status, majorityInfo, leaderProposal).flatMap {
+          case Left(error) =>
+            ConsensusLog
+              .warn(
+                logger,
+                Category.Validation,
+                state.key.show,
+                ConsensusLog.role(selfId, state.leader),
+                Event.ValidationFailed,
+                "reason" -> s"certified_value_validation:$error",
+                "leader" -> ConsensusLog.pid(state.leader),
+                "view" -> leaderProposal.view.toString
               )
-              prepareOrAwaitCertifiedQc(state, accepted, resources, value, carriedQc, newlyAccepted = true)
-          }
+              .as(none[Transition])
+          case Right((value, carriedQc)) =>
+            val accepted = status.copy(
+              proposalArtifactInfo = majorityInfo,
+              candidates = Candidates(value.admissionNominee.toSet),
+              acceptedValue = value.some
+            )
+            prepareOrAwaitCertifiedQc(state, accepted, resources, value, carriedQc, newlyAccepted = true)
+        }
 
       private def advanceAcceptedCertifiedValue(
         state: GlobalSnapshotConsensusState,
@@ -4174,221 +4091,6 @@ object GlobalSnapshotConsensusStateAdvancer {
         } yield result
       }
 
-      private def buildSignatureTransition(
-        state: GlobalSnapshotConsensusState,
-        status: CollectingProposals,
-        majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
-        proposalHashes: List[Hash],
-        leaderVcc: Option[ViewChangeCertificate] = None,
-        leaderTimeoutCertificate: Option[TimeoutCertificate] = None,
-        leaderEvictionCerts: List[EvictionCertificate] = List.empty,
-        leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
-        leaderObservedResponders: List[PeerId] = List.empty,
-        leaderObservedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
-        leaderAdmissionNominee: Option[PeerId] = None
-      )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
-        // B1 apply: on proposal acceptance, shrink this round's committee by the set of peers
-        // carried in the leader's EvictionCertificates. Validation already verified quorum +
-        // signatures + committee membership, so applying is safe and deterministic (same for
-        // every honest node reading the same proposal).
-        //
-        // Bootstrap gate: during bootstrap, validateProposalEcs already rejected any non-empty
-        // cert list, so `leaderEvictionCerts` is effectively always empty here while
-        // isInBootstrap is true. We leave the filter unchanged — the guard is just defense in
-        // depth in case a future refactor forgets the validation-time check.
-        val evictedTargets: Set[PeerId] =
-          if (isInBootstrap(state)) Set.empty
-          else membershipPolicy.acceptedEvictionTargets(leaderEvictionCerts.map(_.targetPeer).toSet)
-        val postEvictionFacilitators =
-          if (evictedTargets.isEmpty) state.facilitators
-          else Facilitators(state.facilitators.value.filterNot(evictedTargets.contains))
-        // GL0 retain mode signs the same canonical round-start membership that proposal
-        // construction hashed. The mutable active set reflects node-local withdrawal timing and
-        // must not enter MajoritySignature.facilitatorsHash. Legacy automatic-removal policy keeps
-        // the post-eviction active set.
-        val signatureFacilitators = membershipPolicy.canonicalFacilitators(
-          postEvictionFacilitators.value,
-          state.roundStartFacilitators.value
-        )
-        val postEvictionRemoved =
-          if (evictedTargets.isEmpty) state.removedFacilitators
-          else RemovedFacilitators(state.removedFacilitators.value ++ evictedTargets)
-        // B2 apply: on proposal acceptance, stash the set of re-admission targets on the
-        // round state so the outcome-extraction step (buildFinishedTransition) can clear
-        // those peers from lastOutcome.readmissionCountdown. Unlike evictions, admissions
-        // do not mutate this round's `facilitators` — the target is not in the current
-        // committee (validateProposalAcs already enforced that). The effect is visible in
-        // the NEXT round's state creation, where the cleared peer is no longer filtered
-        // out of fullBase via readmissionCountdown.
-        // Defense in depth: validateProposalAcs already rejected any proposal carrying more than
-        // the cap (`acs_too_many`), so this selection is a no-op on every honest path. Applying
-        // the SAME shared deterministic selection here guarantees that even if a future refactor
-        // ever lets an over-cap proposal through validation, every node still admits the same
-        // capped subset.
-        val admissionSelection =
-          AdmissionCertificateSelector.select(leaderAdmissionCerts, config.activeAdmissionMaxExpansionPerRound)
-        val admittedTargets: Set[PeerId] =
-          admissionSelection.kept.map(_.targetPeer).toSet
-        val postAdmissionAdmitted =
-          if (admittedTargets.isEmpty) state.admittedFacilitators
-          else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
-        val acceptedTimeoutVoters: SortedSet[PeerId] =
-          leaderTimeoutCertificate
-            .map(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
-            .getOrElse(SortedSet.empty[PeerId])
-        for {
-          facilitatorsHash <- signatureFacilitators.hash
-          view = state.viewNumber.toLong
-          acceptedAt <- Async[F].monotonic.attempt.map(_.toOption)
-          // Prepare the only fallible cryptographic input before taking the vote lock.
-          // Signing locally is not observable; storage/gossip starts only after the lock
-          // accepts this exact (key, view, hash).
-          signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
-          selfMajoritySig = MajoritySignature(
-            signature,
-            facilitatorsHash,
-            state.lastOutcome.finished.snapshotHash,
-            view,
-            majorityInfo.hash
-          )
-          localLock <- consensusStorage.getVoteLock(state.key)
-          effectiveLockedQc = VoteLock.maxByView(
-            localLock.flatMap(_.lockedQc),
-            leaderVcc.flatMap(_.highestQcInVcc)
-          )
-          viewSafetyMode = consensusStorage.viewSafetyMode(state.certifiedConsensusActive)
-          tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc, viewSafetyMode)
-          result <- tryLock match {
-            case Left(rejection) =>
-              ConsensusLog
-                .warn(
-                  logger,
-                  Category.Validation,
-                  state.key.show,
-                  "n/a",
-                  Event.WithdrawValidationFail,
-                  "reason" -> s"vote_lock_rejected: ${rejection.message}",
-                  "rejection" -> rejection.code,
-                  "view" -> view.toString,
-                  "hash" -> majorityInfo.hash.show.take(8)
-                )
-                .as(none[Transition])
-            case Right(_) =>
-              val storeOwnSignature =
-                consensusStorage.addSignature(selfId, state.key, selfMajoritySig).flatMap {
-                  case Some(_) => Async[F].unit
-                  case None =>
-                    new IllegalStateException(
-                      s"Vote locked but self signature was rejected for key=${state.key.show} view=$view"
-                    ).raiseError[F, Unit]
-                }
-
-              val signatureTiming =
-                acceptedAt.traverse_ { started =>
-                  Async[F].monotonic.flatMap { emittedAt =>
-                    Metrics[F].recordTimeHistogram("dag_consensus_proposal_accept_to_signature_time", emittedAt - started)
-                  }
-                }
-
-              val observability =
-                signatureTiming.attempt.void >>
-                  recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash).attempt.void >>
-                  ConsensusLog
-                    .info(
-                      logger,
-                      Category.Phase,
-                      state.key.show,
-                      "n/a",
-                      Event.Eviction,
-                      "assembly" -> "evictions_applied",
-                      "targets" -> evictedTargets.toList.map(ConsensusLog.pid).mkString(","),
-                      "count" -> evictedTargets.size.toString
-                    )
-                    .whenA(evictedTargets.nonEmpty)
-                    .attempt
-                    .void >>
-                  ConsensusLog
-                    .info(
-                      logger,
-                      Category.Phase,
-                      state.key.show,
-                      "n/a",
-                      Event.Admission,
-                      "assembly" -> "admissions_applied",
-                      "targets" -> admittedTargets.toList.map(ConsensusLog.pid).mkString(","),
-                      "count" -> admittedTargets.size.toString
-                    )
-                    .whenA(admittedTargets.nonEmpty)
-                    .attempt
-                    .void >>
-                  (ConsensusLog
-                    .info(
-                      logger,
-                      Category.Phase,
-                      state.key.show,
-                      "n/a",
-                      Event.Admission,
-                      "stage" -> "apply_cap",
-                      "kept" -> admissionSelection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
-                      "dropped" -> admissionSelection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
-                    ) >> Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
-                    .whenA(admissionSelection.dropped.nonEmpty)
-                    .attempt
-                    .void
-
-              Transition(
-                newState = state.copy(
-                  facilitators = postEvictionFacilitators,
-                  removedFacilitators = postEvictionRemoved,
-                  admittedFacilitators = postAdmissionAdmitted,
-                  // Controller evidence stage 1: certificate-applied eviction targets only
-                  // (removedFacilitators also carries facility-phase fork-evictions, which
-                  // the cert-anchored controllerEvidence / penaltyUntil fields must exclude).
-                  certifiedEvictionTargets = state.certifiedEvictionTargets ++ evictedTargets,
-                  // v7 codex turn 2 fix #5: REPLACE on accept (not union). Each accepted
-                  // proposal canonically replaces state.observedResponders. View-N's set
-                  // does NOT bleed into view-N+1 accounting after an honest view change.
-                  observedResponders = ObservedResponders(leaderObservedResponders.toSet),
-                  // v15: REPLACE on accept, same rationale as observedResponders.
-                  observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
-                  acceptedTimeoutCertificateVoters = acceptedTimeoutVoters,
-                  status = CollectingSignatures(
-                    majorityInfo,
-                    status.majorityTrigger,
-                    Candidates(leaderAdmissionNominee.toSet),
-                    facilitatorsHash,
-                    state.lastOutcome.finished.snapshotHash
-                  )
-                ),
-                // ConsensusStateUpdater retains this exact closure atomically with the
-                // CollectingSignatures state. A failure after vote-locking therefore resumes
-                // self-store/savepoint/gossip instead of leaving a locked proposal phase.
-                sideEffect = storeOwnSignature >>
-                  proposalSavepointRef.set(none) >>
-                  spreadSignature(
-                    state,
-                    state.key,
-                    signature,
-                    facilitatorsHash,
-                    state.lastOutcome.finished.snapshotHash,
-                    view,
-                    majorityInfo.hash
-                  ) >> observability
-              ).some.pure[F]
-          }
-        } yield result
-      }
-
-      // =========================================================================
-      // COLLECTING SIGNATURES → FINISHED
-      // =========================================================================
-
-      /** Advances from Signatures to Finished once quorum valid signatures are collected.
-        *
-        * Collects signature declarations, verifies each against the artifact hash, and transitions to Finished with the signed artifact.
-        * Uses the artifact hash (not signed-artifact hash) as `snapshotHash` to avoid non-determinism from varying signature counts across
-        * peers.
-        */
       private def advanceFromSignatures(
         state: GlobalSnapshotConsensusState,
         status: CollectingSignatures,
@@ -4419,41 +4121,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                 checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
               )
               result <- maybeSignatures.flatTraverse { signatures =>
-                if (certifiedConsensusActive(state)) toCertifiedFinishedPhase(state, status, signatures)
-                else toFinishedPhase(state, status, signatures)
+                toCertifiedFinishedPhase(state, status, signatures)
               }
             } yield result
           }
         }
-
-      private def toFinishedPhase(
-        state: GlobalSnapshotConsensusState,
-        status: CollectingSignatures,
-        signatures: SortedMap[PeerId, MajoritySignature]
-      ): F[Option[Transition]] = {
-        val proofs = signatures.map { case (id, sig) => SignatureProof(PeerId._Id.get(id), sig.signature) }.toList
-
-        for {
-          valid <- proofs.filterA(verifySignatureProof(status.majorityArtifactInfo.hash, _))
-          _ <- logInvalidSignatures(state.key, proofs.size, valid.size)
-          role = ConsensusLog.role(selfId, state.leader)
-          _ <- ConsensusLog.info(
-            logger,
-            Category.Phase,
-            state.key.show,
-            role,
-            Event.SignaturesToFinished,
-            "ordinal" -> status.majorityArtifactInfo.artifact.ordinal.show,
-            "signatures" -> s"${valid.size}/${proofs.size}",
-            "hash" -> status.majorityArtifactInfo.hash.show.take(8),
-            "trigger" -> status.majorityTrigger.toString,
-            "leader" -> ConsensusLog.pid(state.leader),
-            "self" -> ConsensusLog.pid(selfId),
-            "view" -> state.viewNumber.toString
-          )
-          result <- buildFinishedTransition(state, status, valid)
-        } yield result
-      }
 
       /** V35 finalization filters declarations by the exact certified value, then requires a frozen-Core commit QC in addition to the
         * unchanged artifact-proof floor.
@@ -4531,11 +4203,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            // Finalization threshold -- two regimes (v4.1.0 cluster-majority floor).
+            // Finalization threshold (v4.1.0 cluster-majority floor, always active under certified consensus).
             //
-            // OUTSIDE bootstrap: finalization requires a super-majority of the FROZEN ROUND COMMITTEE
-            // (`roundStartFacilitators`), via the SAME `QuorumDenominatorShrink.Decision.meets` that every
-            // other cert/phase gate uses (`canFinalize` below). This closes the proven 2-of-5 fork: the
+            // Finalization requires a super-majority of the FROZEN ROUND COMMITTEE (`roundStartFacilitators`),
+            // via the same `FinalityQuorum` the phase gate uses (`canFinalize` below). This closes the proven 2-of-5 fork: the
             // pre-v4.1.0 gate was a strict majority of the CORE sub-committee `(coreSize/2)+1`, which a Core
             // that had shrunk to a cluster-minority could satisfy and self-finalize a snapshot diverging
             // from the cluster majority. The Tier 1 reward-decoupling that motivated the Core-only gate
@@ -4546,10 +4217,6 @@ object GlobalSnapshotConsensusStateAdvancer {
             // failure from an early Facility miss and silently delete its Tier-1 lease. Explicit eligibility,
             // penalty/probation, withdrawal, and certified-eviction paths can remove a seat in a later round;
             // until then, loss of more than one third of the frozen committee halts safely.
-            //
-            // IN bootstrap: the legacy strict-majority Core gate `(coreSize/2)+1` is preserved
-            // byte-identical (plus the shrunk-path OR), keeping the deliberate cold-start liveness slack;
-            // `clusterFloorActive(state)` (== !isInBootstrap) selects the regime.
             //
             // The grace-window machinery below (coreComplete / fullCommittee) is unchanged: it governs
             // proof/evidence collection timing, not the finality threshold or delegated reward recipients,
@@ -4577,30 +4244,16 @@ object GlobalSnapshotConsensusStateAdvancer {
             // now drives both the immediate-finalize check and the signature-count log display below.
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
             val coreSize = state.coreFacilitators.value.size
-            val quorumThreshold = (coreSize / 2) + 1
             val fullCommittee = canonicalCommitteeSize
             val coreSet = state.coreFacilitators.value.toSet
             val coreSignedCount = validSignatures.count(p => coreSet.contains(p.id.toPeerId))
             val coreComplete = coreSignedCount >= coreSize
             val fullCommitteeSigned = validSignatures.size >= fullCommittee
+            // The finalization gate is the LAST quorum chokepoint: signers must reach the committee-supermajority
+            // finality floor over the frozen round committee, so a minority Core can never finalize.
+            val actualFinalityRequired = finalityQuorum(state)
+            val canFinalize = validSignatures.size >= actualFinalityRequired
             for {
-              // v33 quorum-denominator shrink (QuorumDenominatorShrink): the finalization gate is the LAST
-              // quorum chokepoint, routed through the same `Decision` as every cert/phase gate so it cannot
-              // drift. v4.1.0: OUTSIDE bootstrap `canFinalize = decision.meets(signers)` -- signers.size must
-              // reach the committee floor (`baseQuorum`), or, on the shrunk path, an anchor-majority that is
-              // itself floored at the committee majority. A minority Core therefore cannot finalize on ANY
-              // path. IN bootstrap the floor is off, so `meets` would reduce to the Core super-majority; to
-              // keep cold start byte-identical we instead use the legacy strict-majority `(coreSize/2)+1`
-              // with the shrunk-path OR exactly as before.
-              shrinkDecision <- quorumFinalityDecision(state)
-              shrinkSignerIds = validSignatures.map(_.id.toPeerId).toSet
-              canFinalize =
-                if (clusterFloorActive(state)) shrinkDecision.meets(shrinkSignerIds)
-                else validSignatures.size >= quorumThreshold || shrinkDecision.shrunkPath(shrinkSignerIds)
-              actualFinalityRequired =
-                if (clusterFloorActive(state)) shrinkDecision.baseQuorum
-                else if (validSignatures.size >= quorumThreshold) quorumThreshold
-                else shrinkDecision.requiredQuorum
               // Hash over canonical committee: this hash lands in Finished (and
               // thus lastOutcome.finished.facilitatorsHash), which fork detection
               // compares across peers. Deriving from state.facilitators (mutable)
@@ -4622,7 +4275,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   Event.RoundBlockedByState,
                   "reason" -> "insufficient_signatures",
                   "valid" -> validSignatures.size.toString,
-                  "required" -> (if (clusterFloorActive(state)) shrinkDecision.baseQuorum else quorumThreshold).toString,
+                  "required" -> actualFinalityRequired.toString,
                   "committee" -> canonicalCommitteeSize.toString,
                   "facilitators" -> state.facilitators.value.size.toString
                 )
@@ -4695,7 +4348,6 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "signatures" -> s"${validSignatures.size}/$fullCommittee",
                   "required" -> actualFinalityRequired.toString,
                   "finalityMargin" -> (validSignatures.size - actualFinalityRequired).toString,
-                  "coreStrictMajority" -> quorumThreshold.toString,
                   "coreComplete" -> coreComplete.toString,
                   "gracePeriodMs" -> activeGraceWindow.toMillis.toString
                 )
@@ -4758,9 +4410,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] =
         HasherSelector[F].withCurrent { implicit hasher =>
           val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
-          val certifiedLineage = Option
-            .when(state.certifiedConsensusActive)(state.lastOutcome.finished.certifiedOutcome)
-            .flatten
+          val certifiedLineage = state.lastOutcome.finished.certifiedOutcome
             .map(CertifiedConsensus.CertifiedLineageEvidenceV1(_))
           lastArtifact.toHashed.flatMap { hashed =>
             consensusFns.createProposalArtifact(
@@ -4828,8 +4478,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         artifact: GlobalSnapshotArtifact,
         proposal: Proposal
       ): F[Unit] = {
-        val targets =
-          if (state.certifiedConsensusActive) state.roundStartFacilitators.value.toSet else state.facilitators.value.toSet
+        val targets = state.roundStartFacilitators.value.toSet
         val declaration = ConsensusPeerDeclaration(key, proposal)
 
         ProposalCertificateEnvelope.exactProposalEffect(proposal, declaration)(
@@ -4864,8 +4513,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               coreCommit
             )
           )
-        val targets =
-          if (state.certifiedConsensusActive) state.roundStartFacilitators.value.toSet else state.facilitators.value.toSet
+        val targets = state.roundStartFacilitators.value.toSet
         gossip.spreadDirect(declaration, targets)
       }
 

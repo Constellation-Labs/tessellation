@@ -101,8 +101,7 @@ object RewardsServiceSuite extends SimpleIOSuite {
           SortedMap.empty,
           SortedSet.empty,
           SortedSet.empty,
-          SortedSet.empty,
-          Amount.empty
+          SortedSet.empty
         ).pure[IO]
     }
 

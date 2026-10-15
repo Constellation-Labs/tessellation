@@ -4,22 +4,24 @@ This document explains how the MPT integrates with Tessellation's snapshot syste
 
 ## Activation Ordinals
 
-MPT activation is gated per environment by the `last-legacy-state-proof-ordinal`
-HOCON key. The selector treats an ordinal **at or below** the configured value as
-legacy and any ordinal **above** it as MPT (see [State Proof Selector](#state-proof-selector)).
-The values are already committed in `application.conf:115-120`:
+MPT activation is tied to the v4.1 cutover C (`fields-added-ordinals.tessellation-41-migration`).
+The legacy state-proof boundary is not configured separately: `lastLegacyStateProofOrdinalFor(env)`
+derives it as `C - 1` (`0` when C is `0`). The selector treats an ordinal **at or below** that
+boundary as legacy and any ordinal **above** it as MPT (see [State Proof Selector](#state-proof-selector)),
+so MPT proofs start exactly at C.
 
-| Network | `last-legacy-state-proof-ordinal` | First MPT ordinal |
-|---------|-----------------------------------|-------------------|
-| MainNet | 5960000 | 5960001 |
-| TestNet | 3070000 | 3070001 |
-| IntegrationNet | 5075000 | 5075001 |
-| dev | 0 | 1 |
+| Network | Cutover C | Last legacy ordinal | First MPT ordinal |
+|---------|-----------|---------------------|-------------------|
+| MainNet | placeholder 9999999 (set to R+1 at the v3.5 -> v4.1 cutover) | C - 1 | C |
+| TestNet | 0 (fresh v4.1 genesis) | 0 | 1 |
+| IntegrationNet | 0 (fresh v4.1 genesis) | 0 | 1 |
+| dev | 0 | 0 | 1 |
 
-These are live config values, not TBD placeholders. The transition point is the
-boundary above; to change it, edit `last-legacy-state-proof-ordinal` for the
-environment and redeploy. Omitting an environment defaults to `Long.MaxValue`, so
-MPT never activates (see the wiring in `TessellationIOApp.scala:117-118`).
+Mainnet v3.5 history never carried MPT proofs. The former explicit
+`last-legacy-state-proof-ordinal.mainnet = 5960000` came from an aborted v4 hardfork and would
+have replayed mainnet ordinals above 5960000 with the wrong proof format; it was removed together
+with the key. A missing cutover resolves to `MaxValue`, so MPT never activates. The cutover
+procedure is in [Fields-added ordinals](../operations/fields-added-ordinals.md#the-v41-cutover-gate).
 
 ## Snapshot State Flow
 
@@ -181,24 +183,22 @@ flowchart TB
 
 ### Configuration
 
-The `GlobalStateProofSelector` boundary is driven by the `last-legacy-state-proof-ordinal`
-HOCON key, a per-environment map from `AppEnvironment` to `SnapshotOrdinal`
-(`application.conf:115-120`):
+The `GlobalStateProofSelector` boundary is derived from the v4.1 cutover
+(`fields-added-ordinals.tessellation-41-migration`) as `C - 1`:
 
 ```hocon
-last-legacy-state-proof-ordinal {
-  mainnet: 5960000,
-  testnet: 3070000,
-  integrationnet: 5075000,
+fields-added-ordinals.tessellation-41-migration {
+  mainnet: 9999999,
+  testnet: 0,
+  integrationnet: 0,
   dev: 0
 }
 ```
 
-This parses into `SharedConfig.lastLegacyStateProofOrdinal` and is threaded into the
-implicit selector via
-`cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))`
-(`TessellationIOApp.scala:117-118`). If an environment is absent from the map the
-default is `Long.MaxValue`, so every ordinal stays legacy and MPT never activates.
+`TessellationIOApp` threads `cfg.lastLegacyStateProofOrdinalFor(cfg.environment)` and
+`cfg.fieldsAddedOrdinals.subTrieRootsFor(cfg.environment)` into the implicit selector
+(`TessellationIOApp.scala`). If the cutover is absent for an environment it resolves to
+`MaxValue`, so every ordinal stays legacy and MPT never activates.
 
 ## GlobalSnapshotStateProof Structure
 
@@ -432,10 +432,8 @@ Contract State (per-contract per-user):
 
 ### Timeline
 
-The per-environment activation ordinals are committed in
-`application.conf:115-120` (see [Activation Ordinals](#activation-ordinals)); the
-boundary for each network is its `last-legacy-state-proof-ordinal` value. To move a
-network's transition, edit that key and redeploy.
+The boundary for each network is derived from its v4.1 cutover (see
+[Activation Ordinals](#activation-ordinals)). Never move an already-crossed cutover.
 
 ### Dual-Mode Operation
 
@@ -456,14 +454,13 @@ def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotO
 
 ### Transition Boundary
 
-The network coordinates on the `last-legacy-state-proof-ordinal` boundary:
+The network coordinates on the derived boundary C - 1:
 
 1. At-or-below the boundary: legacy proofs.
 2. Above the boundary: MPT proofs.
 3. Validators reject the wrong format for the ordinal.
 
-The boundary values are live config, not TBD. See
-[Activation Ordinals](#activation-ordinals) and the
+See [Activation Ordinals](#activation-ordinals) and the
 [State Proof Selector](#state-proof-selector).
 
 ## Error Handling

@@ -39,7 +39,7 @@ trait SpendActionValidator[F[_]] {
     activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
     allBalances: Map[Option[Address], SortedMap[Address, Balance]],
     enforceAggregateBalance: Boolean
-  ): F[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidationError])])]
+  ): F[(Map[Address, List[SpendAction]], Map[Address, List[(SpendAction, List[SpendActionValidationError])]])]
 }
 
 object SpendActionValidator {
@@ -53,7 +53,7 @@ object SpendActionValidator {
     ): F[
       (
         Map[Address, List[SpendAction]],
-        Map[Address, (SpendAction, List[SpendActionValidationError])]
+        Map[Address, List[(SpendAction, List[SpendActionValidationError])]]
       )
     ] = {
       type Balances = Map[Option[Address], SortedMap[Address, Balance]]
@@ -124,12 +124,8 @@ object SpendActionValidator {
               case (_, spendAction) => spendAction.nonEmpty
             }.toMap
 
-            val rejectedSpendActions = spendTransactionsValidations.flatMap {
-              case (address, (rejected, _)) =>
-                rejected.map {
-                  case (action: SpendAction, errors: List[SpendActionValidationError]) =>
-                    address -> (action, errors)
-                }
+            val rejectedSpendActions = spendTransactionsValidations.collect {
+              case (address, (rejected, _)) if rejected.nonEmpty => address -> rejected
             }.toMap
 
             (acceptedSpendActions, rejectedSpendActions)

@@ -89,20 +89,14 @@ package object pureconfig {
           updatingCombineFunctionSpendActions <- gate("updating-combine-function-spend-actions")
           fixingAllowSpendExpiration <- gate("fixing-allow-spend-expiration")
           fixingAllowSpendAndTokenLockValidation <- gate("fixing-allow-spend-and-token-lock-validation")
-          setSumFix <- gate("set-sum-fix")
-          scFeeBalanceFromContext <- gate("sc-fee-balance-from-context")
-          subTrieRoots <- gate("sub-trie-roots")
-          delegatedRewardsFullCommittee <- gate("delegated-rewards-full-committee")
-          feeTransactionSecurity <- gate("fee-transaction-security")
           fixingFeeTransactionBalanceOverflow <- gate("fixing-fee-transaction-balance-overflow")
           dustSweeps <- gates.atKey("dust-sweeps").flatMap(envToOrdinalToDustSweepReader.from)
-          currencySnapshotProtocolV1 <- gate("currency-snapshot-protocol-v1")
           fixingDataApplicationFeeValidation <- gate("fixing-data-application-fee-validation")
           fixingAllowSpendDestinationCredit <- gate("fixing-allow-spend-destination-credit")
           preventingAllowSpendResurrection <- gate("preventing-allow-spend-resurrection")
           fixingGlobalAllowSpendExpiration <- gate("fixing-global-allow-spend-expiration")
-          fixingDelegatedStakeDoubleWithdrawal <- gate("fixing-delegated-stake-double-withdrawal")
-          fixingSpendActionAggregateBalance <- gate("fixing-spend-action-aggregate-balance")
+          removingProcessedDelegatedStakeWithdrawals <- gate("removing-processed-delegated-stake-withdrawals")
+          tessellation41Migration <- gate("tessellation-41-migration")
         } yield
           FieldsAddedOrdinals(
             tessellation3Migration = tessellation3Migration,
@@ -114,20 +108,14 @@ package object pureconfig {
             updatingCombineFunctionSpendActions = updatingCombineFunctionSpendActions,
             fixingAllowSpendExpiration = fixingAllowSpendExpiration,
             fixingAllowSpendAndTokenLockValidation = fixingAllowSpendAndTokenLockValidation,
-            setSumFix = setSumFix,
-            scFeeBalanceFromContext = scFeeBalanceFromContext,
-            subTrieRoots = subTrieRoots,
-            delegatedRewardsFullCommittee = delegatedRewardsFullCommittee,
-            feeTransactionSecurity = feeTransactionSecurity,
             fixingFeeTransactionBalanceOverflow = fixingFeeTransactionBalanceOverflow,
             dustSweeps = dustSweeps,
-            currencySnapshotProtocolV1 = currencySnapshotProtocolV1,
             fixingDataApplicationFeeValidation = fixingDataApplicationFeeValidation,
             fixingAllowSpendDestinationCredit = fixingAllowSpendDestinationCredit,
             preventingAllowSpendResurrection = preventingAllowSpendResurrection,
             fixingGlobalAllowSpendExpiration = fixingGlobalAllowSpendExpiration,
-            fixingDelegatedStakeDoubleWithdrawal = fixingDelegatedStakeDoubleWithdrawal,
-            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance
+            removingProcessedDelegatedStakeWithdrawals = removingProcessedDelegatedStakeWithdrawals,
+            tessellation41Migration = tessellation41Migration
           )
       }
     }

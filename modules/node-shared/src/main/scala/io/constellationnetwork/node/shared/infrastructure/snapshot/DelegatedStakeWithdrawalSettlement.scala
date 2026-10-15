@@ -30,7 +30,8 @@ object DelegatedStakeWithdrawalSettlement {
   /** A due, backed lock settles once. Include every pending copy that cleanup will retire, even one with a later cooldown, so its greater
     * cumulative entitlement is not silently discarded. Max is the policy for overlapping cumulative lineage, NOT proof that arbitrary
     * corrupt records are entitled to that amount. Public activation requires an ordinal/hash-pinned lineage audit; see the activation docs.
-    * Missing references remain pending on develop, including NEW replacements which first become last-active at R+1.
+    * Missing references are not settled here. NEW replacements stay pending until they become last-active at R+1; any other orphan is
+    * dropped from pending by acceptance under removing-processed-delegated-stake-withdrawals (release/mainnet #1498), without payout.
     */
   def prepare(
     expired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],

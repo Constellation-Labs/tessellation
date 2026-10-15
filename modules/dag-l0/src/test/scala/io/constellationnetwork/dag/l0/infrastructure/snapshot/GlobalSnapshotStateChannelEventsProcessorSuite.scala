@@ -403,6 +403,120 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         expect(!result.returned.contains(StateChannelOutput(address, goodBinary)))
   }
 
+  // release/mainnet reads the staking balance (and the owner fee balance) from the acceptance context, never from the
+  // local MPT store, which can lag or lead it. The MPT store here is empty, so only the context can supply 777.
+  test("the staking balance offered to fee validation comes from the acceptance context, not the MPT store") { res =>
+    implicit val (ks, h, j, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      stakingKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      stakingAddress = stakingKeyPair.getPublic.toAddress
+      lastCurrency <- forAsyncHasher(
+        CurrencyIncrementalSnapshot(
+          SnapshotOrdinal.unsafeApply(1L),
+          Height.MinValue,
+          SubHeight.MinValue,
+          Hash.empty,
+          SortedSet.empty,
+          SortedSet.empty,
+          SnapshotTips(SortedSet.empty, SortedSet.empty),
+          CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+          EpochProgress.MinValue,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None
+        ),
+        keyPair
+      )
+      next <- forAsyncHasher(lastCurrency.value.copy(ordinal = SnapshotOrdinal.unsafeApply(2L)), keyPair)
+      parentHash <- Random.scalaUtilRandom[IO].flatMap(_.nextString(32)).map(Hash(_))
+      bytes <- j.serialize(next)
+      binary <- forAsyncHasher(StateChannelSnapshotBinary(parentHash, bytes, SnapshotFee.MinValue), keyPair)
+      stakingMessage <- forAsyncHasher(
+        io.constellationnetwork.schema.currencyMessage
+          .CurrencyMessage(
+            io.constellationnetwork.schema.currencyMessage.MessageType.Staking,
+            stakingAddress,
+            address,
+            io.constellationnetwork.schema.currencyMessage.MessageOrdinal.MinValue
+          ),
+        keyPair
+      )
+      currencyInfo = CurrencySnapshotInfo(
+        SortedMap.empty,
+        SortedMap.empty,
+        Some(SortedMap(io.constellationnetwork.schema.currencyMessage.MessageType.Staking -> stakingMessage)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None
+      )
+      seen <- cats.effect.Ref.of[IO, List[io.constellationnetwork.schema.balance.Balance]](List.empty)
+      validator = new StateChannelValidator[IO] {
+        def validate(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, snapshotFeesInfo: SnapshotFeesInfo)(
+          implicit hasher: Hasher[IO]
+        ) = seen.update(snapshotFeesInfo.stakingBalance :: _).as(output.validNec[StateChannelValidator.StateChannelValidationError])
+        def validateHistorical(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, snapshotFeesInfo: SnapshotFeesInfo)(
+          implicit hasher: Hasher[IO]
+        ) = validate(output, globalOrdinal, snapshotFeesInfo)(hasher)
+      }
+      manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
+        def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+          implicit hasher: Hasher[IO]
+        ) = IO.pure((SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set.empty[StateChannelOutput]))
+      }
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](mptProducer, GlobalStateKey.toHex[IO])
+      processor = GlobalSnapshotStateChannelEventsProcessor.make[IO](
+        validator,
+        manager,
+        new CurrencySnapshotContextFunctions[IO] {
+          def createContext(
+            context: CurrencySnapshotContext,
+            lastArtifact: Signed[CurrencyIncrementalSnapshot],
+            signedArtifact: Signed[CurrencyIncrementalSnapshot],
+            getGlobalSnapshotByOrdinal: SnapshotOrdinal => IO[Option[Hashed[GlobalIncrementalSnapshot]]]
+          )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotContext] = context.pure[IO]
+          def createHistoricalContext(
+            context: CurrencySnapshotContext,
+            lastArtifact: Signed[CurrencyIncrementalSnapshot],
+            signedArtifact: Signed[CurrencyIncrementalSnapshot],
+            getGlobalSnapshotByOrdinal: SnapshotOrdinal => IO[Option[Hashed[GlobalIncrementalSnapshot]]]
+          )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotContext] = context.pure[IO]
+        },
+        FeeCalculator.make(SortedMap.empty),
+        mptStore,
+        FieldsAddedOrdinalsFixtures.current,
+        Dev
+      )
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> parentHash)).copy(
+        lastCurrencySnapshots = SortedMap(address -> Right((lastCurrency, currencyInfo))),
+        balances = SortedMap(stakingAddress -> io.constellationnetwork.schema.balance.Balance(NonNegLong(777L)))
+      )
+      _ <- processor.process(
+        SnapshotOrdinal.unsafeApply(100L),
+        snapshotInfo,
+        List(StateChannelOutput(address, binary)),
+        StateChannelValidationType.Historical,
+        _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO]
+      )
+      balances <- seen.get
+    } yield
+      expect(
+        balances == List(io.constellationnetwork.schema.balance.Balance(NonNegLong(777L))),
+        s"staking balance must come from the context: $balances"
+      )
+  }
+
   def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None)(
     implicit S: SecurityProvider[IO],
     H: Hasher[IO],

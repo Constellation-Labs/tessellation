@@ -37,3 +37,9 @@ Modeled explicitly on HotStuff / Flow Jolteon / Aptos DiemBFT rather than invent
 - **Rejected alternatives** are retained in the docs for context: `docs/consensus/eviction-cert-deterministic-shrinkage.md` and `docs/consensus/liveness-shrink-permissioned-fallback.md`.
 
 Mechanism reference: `docs/consensus/README.md` (section 5, "multi-committee quorum").
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+`docs/consensus/liveness-shrink-permissioned-fallback.md` is now a short removal stub; its former
+text is in git history. The shipped liveness rung it was compared against (ADR-0021 decision 1) was
+removed with the pre-v35 Global L0 engine.

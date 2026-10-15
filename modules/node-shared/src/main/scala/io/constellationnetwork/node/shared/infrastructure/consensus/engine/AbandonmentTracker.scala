@@ -365,8 +365,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
         ) >>
           Metrics[F].incrementCounter("dag_consensus_abandon_skipped_stale_attempt_or_resources_total")
       case _ =>
-        (storage.getState(key), storage.getVoteLock(key)).tupled.flatMap {
-          case (Some(state), _) if ctx.advancer.getConsensusOutcome(state).isDefined =>
+        storage.getState(key).flatMap {
+          case Some(state) if ctx.advancer.getConsensusOutcome(state).isDefined =>
             ConsensusLog.debug(
               logger,
               Category.Lifecycle,
@@ -377,7 +377,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               "skipped" -> "outcome_ready"
             ) >>
               Metrics[F].incrementCounter("dag_consensus_abandon_skipped_outcome_ready_total")
-          case (Some(state), voteLock) =>
+          case Some(state) =>
             val fromView = state.viewNumber.toLong
             val toView = fromView + 1L
             val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
@@ -406,74 +406,6 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                   Metrics[F].incrementCounter("dag_consensus_abandon_skipped_certified_view_total") >>
                   queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView)).whenA(vccScheduled) >>
                   queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView)).whenA(timeoutScheduled)
-              case _
-                  if StallDetector.sameKeyRestartUnsafe(
-                    state.viewNumber,
-                    ctx.ops.phaseIndex(state.status),
-                    voteLock.exists(_.blocksLegacyViewChange),
-                    storage.viewSafetyMode(state.certifiedConsensusActive)
-                  ) =>
-                // The monitor may have queued this command immediately before proposal
-                // acceptance/self-signing. VoteLock writes do not necessarily bump the
-                // round attempt id, so re-check the safety boundary at drain time as well.
-                reason match {
-                  case _: AbandonReason.Lagging =>
-                    peersCommittedAheadProbe(key)
-                      .handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
-                      .flatMap { probe =>
-                        val action = AbandonmentTracker.lockedAttemptAction(reason, probe)
-                        val observe = ConsensusLog.warn(
-                          logger,
-                          Category.Recovery,
-                          key.toString,
-                          "n/a",
-                          LogEvent.RoundAbandoned,
-                          "reason" -> reason.label,
-                          "action" -> action.label,
-                          "view" -> state.viewNumber.toString,
-                          "phaseIndex" -> ctx.ops.phaseIndex(state.status).toString,
-                          "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
-                          "lockedQcView" -> voteLock.flatMap(_.lockedQc).fold("none")(_.view.toString),
-                          "probeConfirmedAhead" -> probe.confirmedAhead.toString,
-                          "probeOutcome" -> probe.outcome.label,
-                          "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
-                          "probeCorroborators" -> probe.corroboratingPeers.toString
-                        ) >> Metrics[F].incrementCounter(
-                          "dag_consensus_locked_lagging_recovery_probe_total",
-                          Seq(
-                            Metrics.unsafeLabelName("action") -> action.label,
-                            Metrics.unsafeLabelName("outcome") -> probe.outcome.label
-                          )
-                        )
-
-                        observe.attempt.void >> (action match {
-                          case AbandonmentTracker.LockedAttemptAction.RecoverByDownload =>
-                            attemptRecoveryDownload(
-                              key,
-                              reason.label,
-                              "locked_lagging_corroborated",
-                              retainRoundOnTransitionFailure = true,
-                              preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
-                            )
-                          case AbandonmentTracker.LockedAttemptAction.Retain => Async[F].unit
-                        })
-                      }
-                  case _ =>
-                    ConsensusLog.warn(
-                      logger,
-                      Category.Lifecycle,
-                      key.toString,
-                      "n/a",
-                      LogEvent.RoundAbandoned,
-                      "reason" -> reason.label,
-                      "skipped" -> "same_key_restart_unsafe_at_drain",
-                      "view" -> state.viewNumber.toString,
-                      "phaseIndex" -> ctx.ops.phaseIndex(state.status).toString,
-                      "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
-                      "lockedQcView" -> voteLock.flatMap(_.lockedQc).fold("none")(_.view.toString)
-                    ) >>
-                      Metrics[F].incrementCounter("dag_consensus_abandon_skipped_same_key_lock_total")
-                }
               case _ =>
                 performAbandon(key, reason)
             }
@@ -495,7 +427,6 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
       storage
         .condModifyState[Unit](key) {
           case Some(state) =>
-            val mode = storage.viewSafetyMode(state.certifiedConsensusActive)
             // Attribute the abandon to its leader so operators can tell whether a flaky community
             // peer is dragging the cluster down. Pair with dag_consensus_round_completed_total
             // (same `peer_id` label) for a per-leader success-rate query.
@@ -509,8 +440,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               peerQualityTracker
                 .recordRoundAbandoned(state.facilitators.value.toSet)
                 // Cleanup runs before condModifyState commits the state removal. A cleanup failure therefore leaves the exact state and
-                // activation mode intact for the serialized retry instead of re-deriving legacy mode from an already-empty slot.
-                .flatTap(_ => storage.clearResourcesPreservingDeclarations(key, mode))
+                // round intact for the serialized retry.
+                .flatTap(_ => storage.clearResourcesPreservingDeclarations(key))
                 .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
           case _ =>
             none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
@@ -984,22 +915,6 @@ object AbandonmentTracker {
     reason match {
       case lagging: AbandonReason.Lagging => lagging.followerCatchUpEligible
       case _                              => false
-    }
-
-  private[consensus] sealed abstract class LockedAttemptAction(val label: String)
-  private[consensus] object LockedAttemptAction {
-    case object Retain extends LockedAttemptAction("retain_locked_attempt")
-    case object RecoverByDownload extends LockedAttemptAction("corroborated_recovery_download")
-  }
-
-  /** A legacy GL0 vote lock may be cleared only by a real recovery/download boundary. Lagging is therefore not an ordinary-abandon bypass:
-    * it retains the exact attempt unless the authenticated committed-snapshot probe corroborates a downloadable value at or beyond this
-    * key. Other abandon reasons always retain the locked attempt.
-    */
-  private[consensus] def lockedAttemptAction(reason: AbandonReason, probe: PeersAheadProbe): LockedAttemptAction =
-    reason match {
-      case _: AbandonReason.Lagging if probe.confirmedAhead => LockedAttemptAction.RecoverByDownload
-      case _                                                => LockedAttemptAction.Retain
     }
 
   /** Both epochs must still match at command drain. State and resource changes are independent: a fresh declaration can make an abandon
