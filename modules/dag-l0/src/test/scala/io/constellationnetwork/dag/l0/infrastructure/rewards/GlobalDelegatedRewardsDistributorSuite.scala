@@ -1557,9 +1557,9 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       expect(emissionAtStart.value.value == emissionPerEpoch)
         .and(expect(emissionLater.value.value == emissionPerEpoch))
         .and(expect(reserved(MainnetRewardsConfig.protocolWalletMetanomics) == 60_00000000L)) // 30%
-        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury) == 20_00000000L)) // 10%
-        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.aiInference) == 30_00000000L)) // 15%
-        .and(expect(result.reservedAddressRewards.size == 3))
+        // Stardust Treasury 10% + AI Inference 15%, both paid to stardustNewPrimary
+        .and(expect(reserved(MainnetRewardsConfig.stardustNewPrimary) == 50_00000000L))
+        .and(expect(result.reservedAddressRewards.size == 2))
         // validators: 10% split evenly (10 DAG each) plus 10% commission on their delegators' share of the 35% gross
         // pool (1.75 and 5.25 DAG), paid as one transaction per address
         .and(expect(operator(v2NodeAAddress) == List(11_75000000L)))
@@ -1611,14 +1611,12 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         .and(expect(emissionThreeYearsLater.value.value == v2MainnetEmissionPerEpoch))
         .and(expect(within1(emissionOnDoubledLedger.value.value, e * 2)))
         .and(expect(within1(reserved(MainnetRewardsConfig.protocolWalletMetanomics), e * BigDecimal("0.30"))))
-        .and(expect(within1(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury), e * BigDecimal("0.10"))))
-        .and(expect(within1(reserved(DefaultDelegatedRewardsConfigProvider.aiInference), e * BigDecimal("0.15"))))
+        .and(expect(within1(reserved(MainnetRewardsConfig.stardustNewPrimary), e * BigDecimal("0.25"))))
         .and(
           expect(
             result.reservedAddressRewards.map(_.destination) == SortedSet(
               MainnetRewardsConfig.protocolWalletMetanomics,
-              DefaultDelegatedRewardsConfigProvider.stardustTreasury,
-              DefaultDelegatedRewardsConfigProvider.aiInference
+              MainnetRewardsConfig.stardustNewPrimary
             )
           )
         )
@@ -1674,8 +1672,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         .and(expect(within1(reserved(MainnetRewardsConfig.testnet), e * BigDecimal("0.024"))))
         .and(expect(within1(reserved(MainnetRewardsConfig.integrationNet), e * BigDecimal("0.088"))))
         .and(expect(within1(reserved(MainnetRewardsConfig.protocolWalletMetanomics), e * BigDecimal("0.30"))))
-        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury) == 0L))
-        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.aiInference) == 0L))
         // node A configured 5%: delegators get 95% of A's share of the pool, A gets 5% of it
         .and(
           expect(
