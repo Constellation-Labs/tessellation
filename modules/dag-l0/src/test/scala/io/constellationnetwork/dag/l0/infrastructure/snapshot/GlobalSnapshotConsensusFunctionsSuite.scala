@@ -232,7 +232,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     override def isSignedBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] = ???
 
     override def isSignedExclusivelyBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] =
-      ???
+      IO.pure(Valid(signed))
 
     override def validateSignaturesWithSeedlist[A <: AnyRef](
       seedlist: Option[Set[PeerId]],
