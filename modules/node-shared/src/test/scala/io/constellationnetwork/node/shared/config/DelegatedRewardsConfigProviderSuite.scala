@@ -37,8 +37,17 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
         .and(expect(emission.iInitial == emission.iTarget))
         .and(expect(emission.ledgerSupply))
         .and(expect(program.weights(MainnetRewardsConfig.protocolWalletMetanomics) == NonNegFraction.unsafeFrom(30, 100)))
-        .and(expect(program.weights(provider.stardustTreasury) == NonNegFraction.unsafeFrom(10, 100)))
-        .and(expect(program.weights(provider.aiInference) == NonNegFraction.unsafeFrom(15, 100)))
+        .and(expect.same("DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh", MainnetRewardsConfig.stardustNewPrimary.value.value))
+        .and(expect(program.weights(MainnetRewardsConfig.stardustNewPrimary) == NonNegFraction.unsafeFrom(25, 100)))
+        .and(expect(program.weights.size == 2, "Protocol and the shared Stardust wallet are the only reserved recipients"))
+        .and(
+          expect(
+            program.weights.values
+              .map(_.toBigDecimal)
+              .sum + program.validatorsWeight.toBigDecimal + program.delegatorsWeight.toBigDecimal == BigDecimal(1),
+            "The shared wallet must retain both allocations so total weights remain 100%"
+          )
+        )
         .and(expect(program.validatorsWeight == NonNegFraction.unsafeFrom(10, 100)))
         .and(expect(program.delegatorsWeight == NonNegFraction.unsafeFrom(35, 100)))
         .and(expect(program.fixedCommission.contains(NonNegFraction.unsafeFrom(10, 100))))

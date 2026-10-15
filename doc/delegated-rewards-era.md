@@ -34,8 +34,9 @@ is disabled. Each payment retains the approved half-up rounding, so total issuan
 can differ slightly from the nominal budget. Pools without eligible recipients
 remain unminted.
 
-Treasury: `DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8`.
-AI Inference: `DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8`.
+Stardust Treasury and AI Inference both use the existing `stardustNewPrimary`
+wallet, `DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh`. Their weights are
+combined into one 25% payment per epoch, rounded once for that destination.
 The protocol wallet is unchanged.
 
 ## Eligibility and registration
@@ -55,7 +56,10 @@ validation remain in force. These checks use finalized snapshot pre-state balanc
 They do not reserve funds, continuously enforce balances, or introduce a minimum
 amount for the delegator. Existing withdrawal rules remain unchanged.
 
-The network seedlist and existing network collateral requirements are unchanged.
+The network seedlist matches PR #1637 at `9799c93c`: 46 existing IDs remain
+(3 source nodes, 31 operators, and 12 metagraph nodes), removing 260 IDs. This
+network admission change applies when the new seedlist is deployed, independently
+of the rewards epoch gate. Existing network collateral requirements are unchanged.
 There is no separate reward-membership schedule to populate on this branch.
 
 ## API and payout compatibility

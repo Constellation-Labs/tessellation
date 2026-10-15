@@ -989,8 +989,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val activation = DefaultDelegatedRewardsConfigProvider.mainnetMetanomicsV2Epoch
     val withdrawalDelay = EpochProgress(1L)
     val protocol = io.constellationnetwork.node.shared.config.MainnetRewardsConfig.protocolWalletMetanomics
-    val treasury = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
-    val inference = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
+    val stardust = io.constellationnetwork.node.shared.config.MainnetRewardsConfig.stardustNewPrimary
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -1018,8 +1017,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             ProgramsDistributionConfig(
               Map(
                 protocol -> NonNegFraction.unsafeFrom(30, 100),
-                treasury -> NonNegFraction.unsafeFrom(10, 100),
-                inference -> NonNegFraction.unsafeFrom(15, 100)
+                stardust -> NonNegFraction.unsafeFrom(25, 100)
               ),
               NonNegFraction.unsafeFrom(10, 100),
               NonNegFraction.unsafeFrom(35, 100)
@@ -1122,14 +1120,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             nextSupply <- CurrentDagSupply.calculate(producedInfo).liftTo[IO]
           } yield {
             val protocolPayout = artifact.rewards.filter(_.destination == protocol).toList.map(_.amount.value.value).sum
+            val stardustPayouts = artifact.rewards.filter(_.destination == stardust).toList.map(_.amount.value.value)
             val rewardChecks =
               if (trigger == EventTrigger)
                 expect(protocolPayout == 0L, "EventTrigger issues no program reward")
+                  .and(expect(stardustPayouts.isEmpty, "EventTrigger issues no Stardust reward"))
                   .and(expect(artifact.delegateRewards.exists(_.isEmpty), "EventTrigger has no new delegation accrual"))
                   .and(expect(producedInfo.balances(address).value.value == 499900L, "Withdrawal rewards and principal are credited once"))
                   .and(expect(nextSupply.value.value == 500000L, "Withdrawal conserves outstanding supply"))
               else
                 expect(protocolPayout == 3000L, "Protocol receives 30% of the 10000 datum emission")
+                  .and(expect.same(List(2500L), stardustPayouts))
+                  .and(expect.same(2500L, producedInfo.balances(stardust).value.value))
                   .and(
                     expect(
                       producedInfo.balances(address).value.value == 501250L,
