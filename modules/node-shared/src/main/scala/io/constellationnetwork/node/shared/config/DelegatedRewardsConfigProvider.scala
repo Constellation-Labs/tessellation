@@ -33,8 +33,6 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
   // Fixed-emission metanomics: a flat 2% per year of the DAG outstanding in the ledger, split by metanomicsV2DistributionProgram.
-  val stardustTreasury: Address = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
-  val aiInference: Address = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
   val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
   val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
   val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_990_000L) // TODO: set the real activation epoch
@@ -200,8 +198,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
     ProgramsDistributionConfig(
       weights = Map(
         protocolWalletMetanomics -> NonNegFraction.unsafeFrom(30L, 100L),
-        stardustTreasury -> NonNegFraction.unsafeFrom(10L, 100L),
-        aiInference -> NonNegFraction.unsafeFrom(15L, 100L)
+        // Stardust Treasury 10% and AI Inference 15% both pay to stardustNewPrimary; one map key, so one 25% entry
+        stardustNewPrimary -> NonNegFraction.unsafeFrom(25L, 100L)
       ),
       validatorsWeight = NonNegFraction.unsafeFrom(10L, 100L),
       delegatorsWeight = NonNegFraction.unsafeFrom(35L, 100L), // gross; validators take fixedCommission out of it
