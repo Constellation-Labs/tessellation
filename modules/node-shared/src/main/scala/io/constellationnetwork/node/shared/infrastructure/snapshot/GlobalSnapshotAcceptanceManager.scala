@@ -14,6 +14,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -265,7 +266,7 @@ object GlobalSnapshotAcceptanceManager {
           delegatedStakeAcceptanceResult
         )
         acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
-          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
+          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, epochProgress)
           .map(acceptanceResult =>
             acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed))).toSortedMap
           )
@@ -330,9 +331,19 @@ object GlobalSnapshotAcceptanceManager {
             )
           }
 
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+        (updatedBalancesByRewards, acceptedRewardTxs) <- Async[F].fromEither(
+          if (DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epochProgress))
+            RewardTransactionAggregation
+              .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
+              .leftWiden[Throwable]
+              .flatMap(RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, _))
+          else
+            Right(
+              acceptRewardTxs(
+                updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+              )
+            )
         )
 
         currencyBalances = currencySnapshots.toList.map {

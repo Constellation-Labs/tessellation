@@ -60,7 +60,7 @@ object UpdateDelegatedStakeAcceptanceManager {
           createDelegatedStakeAcceptanceResult <- creates.foldLeftM[F, CreateDelegatedStakeAcceptanceResult](
             CreateDelegatedStakeAcceptanceResult.empty
           ) { (acc, signed) =>
-            validator.validateCreateDelegatedStake(signed, lastSnapshotContext).map { validated =>
+            validator.validateCreateDelegatedStake(signed, lastSnapshotContext, currentGlobalEpochProgress).map { validated =>
               val (newAccepted, newRejected) = validated match {
                 case Valid(a) =>
                   if (acc.parentRefsSeen(signed.parent)) {

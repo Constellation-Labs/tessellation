@@ -51,7 +51,9 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject stakes with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -91,7 +93,9 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject withdrawals with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -131,7 +135,9 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should accept withdrawals with different parents") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]

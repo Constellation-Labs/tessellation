@@ -15,7 +15,7 @@ import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig,
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrentDagSupply, DelegatedRewardsDistributor}
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -170,8 +170,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     for {
       emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
 
-      (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
-      latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
+      fixedCommission <- delegatedRewardsDistributor.getDistributionProgram(lastSnapshot.epochProgress).map(_.fixedCommission)
+      (_, _, totalDelegateStake, legacyTotalSupply) <- processDelegations(lastSnapshotInfo)
+      currentTotalSupply <-
+        if (emissionConfig.ledgerSupply) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F] else legacyTotalSupply.pure[F]
+      latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo, fixedCommission)
 
       currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
       nextPrice <- getNextDagPrice(lastSnapshotInfo)
@@ -216,7 +219,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     ).mapN(Tuple4.apply)
   }
 
-  private def getLatestDelegateRewardTotal(snapshot: GlobalIncrementalSnapshot, info: GlobalSnapshotInfo): F[Amount] = {
+  private def getLatestDelegateRewardTotal(
+    snapshot: GlobalIncrementalSnapshot,
+    info: GlobalSnapshotInfo,
+    fixedCommission: Option[NonNegFraction]
+  ): F[Amount] = {
     val delegateRewards = snapshot.delegateRewards
       .getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]])
 
@@ -225,8 +232,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
     val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
       case (acc, (peerId, rewards)) =>
-        val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
-        val nodeCommission = BigDecimal(nodeCommissionValue)
+        val nodeCommission = fixedCommission.map(_.toBigDecimal).getOrElse {
+          BigDecimal(nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0))
+        }
 
         val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
 
@@ -308,10 +316,10 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateDelegatedStake.Create]]
-            result <- validator.validateCreateDelegatedStake(signed, info)
+            result <- validator.validateCreateDelegatedStake(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted create delegated stake from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

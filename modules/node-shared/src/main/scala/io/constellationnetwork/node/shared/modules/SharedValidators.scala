@@ -8,6 +8,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
@@ -25,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -68,15 +70,17 @@ object SharedValidators {
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
     val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
 
+    val metanomicsV2Active = (epoch: EpochProgress) => DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epoch)
     val updateNodeParametersValidator = UpdateNodeParametersValidator.make(
       signedValidator,
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction,
       delegatedStaking.maxMetadataFieldsChars,
-      l0Seedlist
+      l0Seedlist,
+      metanomicsV2Active
     )
     val updateDelegatedStakeValidator =
-      UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
+      UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist, metanomicsV2Active)
     val updateNodeCollateralValidator =
       UpdateNodeCollateralValidator.rejectAll[F]
 
