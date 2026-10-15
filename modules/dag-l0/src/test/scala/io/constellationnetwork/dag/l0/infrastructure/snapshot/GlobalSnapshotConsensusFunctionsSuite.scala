@@ -365,7 +365,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     dbLogger: LoggerBundle[IO],
     environment: AppEnvironment = Dev,
     configProvider: DelegatedRewardsConfigProvider = delegatedRewardsConfigProvider,
-    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L))
+    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L)),
+    fieldsAddedOrdinals: FieldsAddedOrdinals = FieldsAddedOrdinalsFixtures.current
   )(
     implicit j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
@@ -380,7 +381,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     GlobalSnapshotAcceptanceManager
       .make[IO](
-        FieldsAddedOrdinalsFixtures.current,
+        fieldsAddedOrdinals,
         MetagraphsSyncConfig(PosInt(100)),
         environment,
         bam,
@@ -405,7 +406,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     environment: AppEnvironment = Dev,
     rewards: DelegatedRewardsDistributor[IO] = delegatorRewards,
     configProvider: DelegatedRewardsConfigProvider = delegatedRewardsConfigProvider,
-    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L))
+    withdrawalDelay: EpochProgress = EpochProgress(NonNegLong(136080L)),
+    fieldsAddedOrdinals: FieldsAddedOrdinals = FieldsAddedOrdinalsFixtures.current
   )(
     implicit j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
@@ -439,7 +441,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         dbLogger,
         environment,
         configProvider,
-        withdrawalDelay
+        withdrawalDelay,
+        fieldsAddedOrdinals
       )
       rewardsInfoStorage <- RewardsInfoStorage.make
       rewardsInfoCalculator = RewardsInfoCalculator.make(rewards)
@@ -1120,7 +1123,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         environment = AppEnvironment.Mainnet,
         rewards = rewards,
         configProvider = provider,
-        withdrawalDelay = withdrawalDelay
+        withdrawalDelay = withdrawalDelay,
+        fieldsAddedOrdinals = FieldsAddedOrdinalsFixtures.currentFor(AppEnvironment.Mainnet)
       )
       // replay runs on its own MPT store, as a downloading node would
       replayMptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
@@ -1132,7 +1136,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         dbLogger,
         environment = AppEnvironment.Mainnet,
         configProvider = provider,
-        withdrawalDelay = withdrawalDelay
+        withdrawalDelay = withdrawalDelay,
+        fieldsAddedOrdinals = FieldsAddedOrdinalsFixtures.currentFor(AppEnvironment.Mainnet)
       )
       recreation = GlobalSnapshotContextFunctions
         .make[IO](
