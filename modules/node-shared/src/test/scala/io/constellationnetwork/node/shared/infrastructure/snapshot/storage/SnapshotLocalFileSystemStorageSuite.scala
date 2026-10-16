@@ -18,6 +18,7 @@ import io.constellationnetwork.storage.PathGenerator._
 
 import better.files._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -148,6 +149,56 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
             } yield expect.all(hashFile.exists, ordinalFile.isSameFileAs(hashFile))
         }
       }
+    }
+  }
+
+  test("ensureOrdinalLink - repairs a missing ordinal index only from exact hash-indexed bytes") { res =>
+    implicit val (_, kryo, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              _ <- storage.delete(snapshot.ordinal)
+              status <- storage.ensureOrdinalLink(hashed.hash, snapshot.ordinal)
+              repaired <- storage.read(snapshot.ordinal)
+            } yield expect.all(status == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Repaired, repaired.contains(snapshot))
+        }
+      }
+    }
+  }
+
+  test("replaceForRecovery - replaces both indexes and removes an abandoned same-ordinal hash across restart") { res =>
+    implicit val (_, kryo, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, original) = snapshots
+        replacementKey <- KeyPairGenerator.makeKeyPair[IO]
+        replacement <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          original.value.copy(epochProgress = EpochProgress(NonNegLong.unsafeFrom(1L))),
+          replacementKey
+        )
+        originalHash <- original.toHashed.map(_.hash)
+        replacementHash <- replacement.toHashed.map(_.hash)
+        _ <- storage.write(original)
+        _ <- storage.replaceForRecovery(replacement)
+        restarted <- mkLocalFileSystemStorage(tmpDir)
+        oldByHash <- restarted.read(originalHash)
+        replacementByHash <- restarted.read(replacementHash)
+        replacementByOrdinal <- restarted.read(replacement.ordinal)
+      } yield
+        expect.all(
+          originalHash != replacementHash,
+          oldByHash.isEmpty,
+          replacementByHash.contains(replacement),
+          replacementByOrdinal.contains(replacement)
+        )
     }
   }
 
