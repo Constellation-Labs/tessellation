@@ -210,7 +210,7 @@ object UpdateDelegatedStakeAcceptanceManager {
 
           createResult <- sortedCreates.foldLeftM(CreateDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
             validator
-              .validateCreateDelegatedStake(signed, lastSnapshotContext)
+              .validateCreateDelegatedStake(signed, lastSnapshotContext, currentGlobalEpochProgress)
               .map(processCreateValidation(acc, signed, _, acceptedTokenLocks, pendingWithdrawalTokenLockRefs, isDoubleWithdrawalFixActive))
           }
 

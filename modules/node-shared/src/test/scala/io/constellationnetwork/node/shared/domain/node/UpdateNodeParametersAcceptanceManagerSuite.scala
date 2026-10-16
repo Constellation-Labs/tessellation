@@ -12,6 +12,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -45,7 +46,11 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       signedValidList <- validList(source).traverse(params => forAsyncHasher(params, keyPair))
       signedInvalidList <- invalidList(source).traverse(params => forAsyncHasher(params, keyPair))
       acceptanceManager = mkAcceptanceManager(Set(peerId))
-      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(signedInvalidList ++ signedValidList, mkGlobalContext())
+      acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(
+        signedInvalidList ++ signedValidList,
+        mkGlobalContext(),
+        EpochProgress.MinValue
+      )
     } yield
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))
   }
@@ -62,7 +67,8 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       RewardFraction(5_000_000),
       RewardFraction(10_000_000),
       PosInt(140),
-      seedList.some
+      seedList.some,
+      _ => false
     )
     UpdateNodeParametersAcceptanceManager.make[IO](updateNodeParametersValidator)
   }
