@@ -53,8 +53,18 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
         .and(expect(program.fixedCommission.contains(NonNegFraction.unsafeFrom(10, 100))))
         .and(expect(program.flatInflationRate.contains(NonNegFraction.zero)))
         .and(expect(provider.metanomicsV2Active(AppEnvironment.Mainnet, epoch)))
-        .and(expect(provider.minRegistrationBalance.value.value == 100000000000000L))
+        .and(expect(provider.minRegistrationBalance(epoch).value.value == 25000000000000L))
     }
+  }
+
+  pureTest("registration balance is 250K DAG until the Nov 14 epoch and 1M DAG from it") {
+    val raise = provider.mainnetRegistrationBalanceRaiseEpoch
+    expect(raise > activation)
+      .and(
+        expect(provider.minRegistrationBalance(EpochProgress(NonNegLong.unsafeFrom(raise.value.value - 1L))).value.value == 25000000000000L)
+      )
+      .and(expect(provider.minRegistrationBalance(raise).value.value == 100000000000000L))
+      .and(expect(provider.minRegistrationBalance(raise.next).value.value == 100000000000000L))
   }
 
   List(AppEnvironment.Dev, AppEnvironment.Testnet, AppEnvironment.Integrationnet).foreach { environment =>

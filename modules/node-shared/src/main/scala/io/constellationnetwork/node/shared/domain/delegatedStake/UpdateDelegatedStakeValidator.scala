@@ -45,7 +45,7 @@ trait UpdateDelegatedStakeValidator[F[_]] {
 
 object UpdateDelegatedStakeValidator {
   // After the gate the node being delegated to must still hold the registration balance, so an operator cannot
-  // register, move the 1M DAG out, and keep collecting delegations.
+  // register, move the registration balance out, and keep collecting delegations.
   private def validateNodeBalance(
     signed: Signed[UpdateDelegatedStake.Create],
     lastContext: GlobalSnapshotInfo,
@@ -55,7 +55,7 @@ object UpdateDelegatedStakeValidator {
   ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
     if (!metanomicsV2Active(epochProgress)) signed.validNec
     else {
-      val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+      val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance(epochProgress)
       val balance = nodeSource.flatMap(lastContext.balances.get).getOrElse(Balance.empty)
       if (balance.satisfiesCollateral(minimum)) signed.validNec
       else NodeBelowRegistrationBalance(signed.nodeId, balance, minimum).invalidNec
