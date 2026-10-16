@@ -36,7 +36,11 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
   val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
   val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_913_350L)
-  val minRegistrationBalance: Amount = Amount(1_000_000_00000000L)
+  // Registration and new delegations need 250K DAG on the node's wallet until the Nov 14 2026 collateral change, then 1M DAG.
+  // ~2026-11-14 00:00 UTC at the ~60.7 s/epoch observed after activation; re-check the pace before that date.
+  val mainnetRegistrationBalanceRaiseEpoch: EpochProgress = EpochProgress(2_954_500L)
+  def minRegistrationBalance(epoch: EpochProgress): Amount =
+    if (epoch < mainnetRegistrationBalanceRaiseEpoch) Amount(250_000_00000000L) else Amount(1_000_000_00000000L)
 
   private lazy val defaultConfig = getConfig()
 

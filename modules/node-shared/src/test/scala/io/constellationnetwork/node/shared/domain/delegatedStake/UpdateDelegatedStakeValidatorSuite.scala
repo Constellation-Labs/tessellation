@@ -609,18 +609,46 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       emptySeedlist = Some(Set.empty[SeedlistEntry])
-      minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
-      // the node registered from keyPair, i.e. sourceAddress, so that is the wallet that must hold the 1M DAG
+      minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance(legacyEpoch)
+      // the node registered from keyPair, i.e. sourceAddress, so that is the wallet that must hold the registration balance
       funded = lastContext.copy(balances = SortedMap(sourceAddress -> Balance(minimum.value)))
       legacy <- mkValidator(emptySeedlist).validateCreateDelegatedStake(signed, funded, legacyEpoch)
       active <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, funded, legacyEpoch)
-      // the node moved its 1M DAG out after registering: no new delegations
+      // the node moved its registration balance out after registering: no new delegations
       drained <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
     } yield
       expect
         .same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy)
         .and(expect.same(Valid(signed), active))
         .and(expect.same(NodeBelowRegistrationBalance(validCreate.nodeId, Balance.empty, minimum).invalidNec, drained))
+  }
+
+  test("a node holding 250K DAG receives new delegations until the Nov 14 epoch and needs 1M DAG from it") { res =>
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
+    val raise = DefaultDelegatedRewardsConfigProvider.mainnetRegistrationBalanceRaiseEpoch
+    val beforeRaise = EpochProgress(NonNegLong.unsafeFrom(raise.value.value - 1L))
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      validator = mkValidator(Some(Set.empty[SeedlistEntry]), metanomicsV2Active = true)
+      quarterMillion = lastContext.copy(balances = SortedMap(sourceAddress -> Balance(NonNegLong.unsafeFrom(250_000_00000000L))))
+      before <- validator.validateCreateDelegatedStake(signed, quarterMillion, beforeRaise)
+      at <- validator.validateCreateDelegatedStake(signed, quarterMillion, raise)
+    } yield
+      expect
+        .same(Valid(signed), before)
+        .and(
+          expect.same(
+            NodeBelowRegistrationBalance(
+              validCreate.nodeId,
+              Balance(NonNegLong.unsafeFrom(250_000_00000000L)),
+              Amount(NonNegLong.unsafeFrom(1_000_000_00000000L))
+            ).invalidNec,
+            at
+          )
+        )
   }
 
   private def mkValidator(seedlist: Option[Set[SeedlistEntry]] = None, metanomicsV2Active: Boolean = false)(
