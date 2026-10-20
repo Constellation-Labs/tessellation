@@ -142,10 +142,10 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateDelegatedStake.Create]]
-            result <- validator.validateCreateDelegatedStake(signed, info)
+            result <- validator.validateCreateDelegatedStake(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted create delegated stake from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

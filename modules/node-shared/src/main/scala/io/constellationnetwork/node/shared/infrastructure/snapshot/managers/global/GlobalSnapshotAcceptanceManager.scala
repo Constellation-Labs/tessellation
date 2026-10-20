@@ -17,6 +17,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -270,7 +271,7 @@ object GlobalSnapshotAcceptanceManager {
           )
 
           nodeParamsResult <- updateNodeParametersAcceptanceManager
-            .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
+            .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, epochProgress)
             .map(acceptanceResult =>
               SortedMap.from(
                 acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed)))
@@ -852,7 +853,14 @@ object GlobalSnapshotAcceptanceManager {
             )
 
             (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) <- Async[F].fromEither(
-              if (withdrawalSettlement.isDefined)
+              // one transaction per address across withdrawal, operator and program payouts, so equal amounts to the
+              // same address never collapse in the SortedSet union below
+              if (DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epochProgress))
+                RewardTransactionAggregation
+                  .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
+                  .leftWiden[Throwable]
+                  .flatMap(RewardAcceptanceManager.acceptRewardTxsChecked(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, _))
+              else if (withdrawalSettlement.isDefined)
                 RewardAcceptanceManager.acceptRewardTxsChecked(
                   updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
                   withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards

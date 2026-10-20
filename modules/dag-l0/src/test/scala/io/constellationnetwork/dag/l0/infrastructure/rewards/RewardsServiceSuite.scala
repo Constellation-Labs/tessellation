@@ -8,7 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
-import io.constellationnetwork.node.shared.config.types.EmissionConfigEntry
+import io.constellationnetwork.node.shared.config.types.{EmissionConfigEntry, ProgramsDistributionConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -71,6 +71,9 @@ object RewardsServiceSuite extends SimpleIOSuite {
 
   def createMockDelegatedRewardsDistributor: DelegatedRewardsDistributor[IO] =
     new DelegatedRewardsDistributor[IO] {
+      override def getDistributionProgram(epochProgress: EpochProgress): IO[ProgramsDistributionConfig] =
+        ProgramsDistributionConfig(Map.empty, NonNegFraction.one, NonNegFraction.one).pure[IO]
+
       override def getEmissionConfig(epochProgress: EpochProgress): IO[EmissionConfigEntry] =
         EmissionConfigEntry(
           epochsPerYear = PosLong(100L),

@@ -1649,13 +1649,19 @@ object types {
     iImpact: NonNegFraction,
     totalSupply: Amount,
     dagPrices: Map[EpochProgress, NonNegFraction],
-    epochsPerMonth: NonNegLong
+    epochsPerMonth: NonNegLong,
+    // when true, totalSupply is ignored and the emission base is the outstanding DAG in the previous snapshot's ledger
+    ledgerSupply: Boolean = false
   )
 
   case class ProgramsDistributionConfig(
     weights: Map[Address, NonNegFraction],
     validatorsWeight: NonNegFraction,
-    delegatorsWeight: NonNegFraction
+    delegatorsWeight: NonNegFraction,
+    // when set, overrides DelegatedRewardsConfig.flatInflationRate for the epochs this program covers
+    flatInflationRate: Option[NonNegFraction] = None,
+    // when set, every node operator takes this commission on delegator rewards instead of its configured rewardFraction
+    fixedCommission: Option[NonNegFraction] = None
   )
 
   case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)
