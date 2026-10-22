@@ -50,13 +50,14 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
     }
   }
 
-  // Dev-only gates carry no explicit Mainnet entry, so there is nothing to remove; absent and disabled hash identically.
-  private val devOnlyThresholdPaths = Set(
+  // These gates carry no explicit Mainnet entry, so there is nothing to remove; absent and disabled hash identically.
+  private val absentMainnetThresholdPaths = Set(
     "fields-added-ordinals.currency-snapshot-protocol-v1",
-    "fields-added-ordinals.fixing-delegated-stake-double-withdrawal"
+    "fields-added-ordinals.fixing-delegated-stake-double-withdrawal",
+    "fields-added-ordinals.burn-action-activation"
   )
 
-  thresholdPaths.filterNot(devOnlyThresholdPaths.contains).foreach { path =>
+  thresholdPaths.filterNot(absentMainnetThresholdPaths.contains).foreach { path =>
     pureTest(s"$path: removing an explicit Mainnet activation changes the consensus hash") {
       val incomplete = ConfigSource.fromConfig(raw.withoutPath(s"$path.mainnet")).loadOrThrow[SharedConfigReader]
       expect(hash(packaged, AppEnvironment.Mainnet) != hash(incomplete, AppEnvironment.Mainnet))

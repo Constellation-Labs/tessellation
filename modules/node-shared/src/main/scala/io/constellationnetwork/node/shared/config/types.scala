@@ -101,7 +101,10 @@ object types {
     // At/after this global ordinal, Global L0 debits each metagraph's direct SpendAction legs from a running balance while
     // validating, so the accepted legs cannot together exceed the metagraph's balance. Below it each leg is only compared
     // with the starting balance, and an over-committed batch fails the round when the legs are applied.
-    fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // First active GLOBAL ordinal, read from the signed parent Currency snapshot's globalSyncView.
+    // No environment is enabled by default. MaxValue is a disabled sentinel, including at MaxValue.
+    burnActionActivation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -173,6 +176,9 @@ object types {
     def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingSpendActionAggregateBalance, environment)
 
+    def burnActionActivationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(burnActionActivation, environment)
+
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
       SortedMap(
@@ -197,7 +203,8 @@ object types {
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
         "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment),
-        "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment)
+        "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment),
+        "burnActionActivation" -> burnActionActivationFor(environment)
       )
   }
 

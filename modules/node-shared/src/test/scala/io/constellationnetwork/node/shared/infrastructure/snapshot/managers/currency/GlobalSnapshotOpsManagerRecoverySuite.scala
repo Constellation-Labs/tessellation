@@ -20,12 +20,14 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hashed, Hasher}
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import fs2.concurrent.SignallingRef
 import weaver.SimpleIOSuite
@@ -132,6 +134,123 @@ object GlobalSnapshotOpsManagerRecoverySuite extends SimpleIOSuite {
         expect.same(1, afterHistorical) &&
         expect(live.swap.exists(_.isInstanceOf[HistoricalGlobalSnapshotResolver.OutsideRetainedWindow])) &&
         expect.same(afterHistorical, afterLive)
+  }
+
+  test("legacy reconsumption evidence is invocation-local and preserves historical declarations") {
+    val currency = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+    val current = SnapshotOrdinal.unsafeApply(2L)
+    for {
+      implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      ops <- manager
+      global <- snapshot(20L)
+      pending = SortedSet(global.ordinal, SnapshotOrdinal.unsafeApply(21L))
+      sync = Some(SortedMap(currency -> MetagraphSyncDataInfo(global.ordinal, EpochProgress.MinValue, pending)))
+      first <- ops.getLastGlobalSnapshotsSpendActionsWithConsumed(
+        global.ordinal,
+        List(global),
+        _ => IO.raiseError(new IllegalStateException("unexpected fetch")),
+        currency,
+        sync,
+        current,
+        None,
+        SortedSet.empty,
+        global.ordinal,
+        SnapshotOrdinal.MinValue,
+        LiveBounded,
+        false
+      )
+      repeat <- ops.getLastGlobalSnapshotsSpendActionsWithConsumed(
+        global.ordinal,
+        List(global),
+        _ => IO.raiseError(new IllegalStateException("unexpected fetch")),
+        currency,
+        sync,
+        current,
+        None,
+        SortedSet.empty,
+        global.ordinal,
+        SnapshotOrdinal.MinValue,
+        LiveBounded,
+        false
+      )
+      legacyApi <- ops.getLastGlobalSnapshotsSpendActions(
+        global.ordinal,
+        List(global),
+        _ => IO.raiseError(new IllegalStateException("unexpected fetch")),
+        currency,
+        sync,
+        current,
+        None,
+        SortedSet.empty,
+        global.ordinal,
+        SnapshotOrdinal.MinValue,
+        LiveBounded,
+        false
+      )
+      nextRound <- ops.getLastGlobalSnapshotsSpendActionsWithConsumed(
+        global.ordinal,
+        List(global),
+        _ => IO.raiseError(new IllegalStateException("unexpected fetch")),
+        currency,
+        sync,
+        SnapshotOrdinal.unsafeApply(3L),
+        None,
+        SortedSet.empty,
+        global.ordinal,
+        SnapshotOrdinal.MinValue,
+        LiveBounded,
+        false
+      )
+    } yield
+      expect.same(SortedSet(global.ordinal), first._2) &&
+        expect.same(SortedSet(global.ordinal), first._3) &&
+        expect.same(SortedSet.empty[SnapshotOrdinal], repeat._2) &&
+        expect.same(first._3, repeat._3) &&
+        expect.same((repeat._1, repeat._2), legacyApi) &&
+        expect.same(SortedSet(SnapshotOrdinal.unsafeApply(21L)), pending -- repeat._3) &&
+        expect.same(SortedSet.empty[SnapshotOrdinal], nextRound._3)
+  }
+
+  test("a failed dependency resolution cannot yield consumed evidence or populate the cache") {
+    val currency = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+    for {
+      implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      ops <- manager
+      global <- snapshot(20L)
+      sync = Some(SortedMap(currency -> MetagraphSyncDataInfo(global.ordinal, EpochProgress.MinValue, SortedSet(global.ordinal))))
+      failed <- ops
+        .getLastGlobalSnapshotsSpendActionsWithConsumed(
+          global.ordinal,
+          Nil,
+          _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO],
+          currency,
+          sync,
+          SnapshotOrdinal.unsafeApply(2L),
+          None,
+          SortedSet.empty,
+          global.ordinal,
+          SnapshotOrdinal.MinValue,
+          LiveBounded,
+          false
+        )
+        .attempt
+      resolved <- ops.getLastGlobalSnapshotsSpendActionsWithConsumed(
+        global.ordinal,
+        List(global),
+        _ => IO.raiseError(new IllegalStateException("unexpected fetch")),
+        currency,
+        sync,
+        SnapshotOrdinal.unsafeApply(2L),
+        None,
+        SortedSet.empty,
+        global.ordinal,
+        SnapshotOrdinal.MinValue,
+        LiveBounded,
+        false
+      )
+    } yield expect(failed.isLeft) && expect.same(SortedSet(global.ordinal), resolved._2) && expect.same(resolved._2, resolved._3)
   }
 
   pureTest("signed deterministic-history semantics remain bounded during historical recreation") {
