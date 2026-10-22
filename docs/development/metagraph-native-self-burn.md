@@ -2,7 +2,8 @@
 
 Status: proposal for PR #1526; maintainer review and rollout approval remain required.
 Burning is disabled in every packaged environment. No live-network acceptance is claimed.
-Base: upstream `develop` `11cce41dbb6c6d8be17e48a29718f899f68ff3d2`.
+Refreshed base: upstream `develop` `827bfec18cde5580a601f2ddca6b38b2a422159b`.
+Historical pre-refresh base: `11cce41dbb6c6d8be17e48a29718f899f68ff3d2`.
 Replaces the implementation proposed at PR head `de08653be62d5cde164dc1812da20ee0c7ab8945`;
 the Euclid demo is unchanged and requires separate review before use with this revision.
 
@@ -24,8 +25,11 @@ underflow returns a typed rejection, never a throw, wrapping sum or clamped resi
 
 A lagging Currency view must not consume backing funds already committed to an unapplied
 Global change. Burns therefore reject while the metagraph's retained unapplied ordinals
-contain dependencies not acknowledged by this acceptance or the signed parent. Ordinary
-snapshots and spending continue; the application can request a burn again after catch-up.
+contain dependencies neither consumed by this acceptance nor acknowledged by the signed parent.
+Consumption is tracked separately from newly emitted acknowledgments: same-ordinal replay may
+reconsume an already-known spend without emitting a new acknowledgment. Historical acknowledgment
+values remain unchanged. Ordinary snapshots and spending continue; the application can request
+a burn again after catch-up.
 An emitted SpendAction is not itself a finalized spend: only Global-accepted spends enter
 Currency settlement. This proposal does not change spend authority or its acceptance order.
 
@@ -171,6 +175,30 @@ not fabricated as test results.
 
 Toolchain: OpenJDK 21.0.12.1+1, Scala 2.13.18 and sbt 1.9.8.
 
+### Current upstream refresh qualification
+
+The following results apply to the executable sources and test assertions refreshed onto
+`827bfec18cde5580a601f2ddca6b38b2a422159b`:
+
+- Expanded focused acceptance, dependency-consumption/reconstruction, configuration and codec
+  checks: 360 passed (347 node-shared and 13 shared codec checks).
+- Full import/format/test gate across all projects: 2,709 passed, zero failures/errors; two
+  unchanged upstream ignored data-generation tests. Import and format checks passed.
+- Independent selected-suite review: 324 passed. Selected and focused suites overlap the full
+  suite; their counts are not additive.
+
+The refresh preserves upstream spend/fee validators, balance processing and the Global
+acceptance manager. Combined spend/fee/burn tests cover independent reconstruction and
+same-ordinal reconsumption; see [the refresh notes](burn-1526-upstream-refresh.md).
+Publication sanitization changes only documentation and commit metadata, not these executable
+sources or test assertions. The recorded results are reused; no new test run of the sanitized
+copy or single-test-JVM qualification is claimed. Stock test forking is retained.
+
+### Historical pre-refresh qualification
+
+The following counts belong to the earlier implementation on
+`11cce41dbb6c6d8be17e48a29718f899f68ff3d2`, not the current refresh:
+
 - Focused activation, acceptance, validator, configuration and codec suites: 259 passed.
 - Full import/format/test gate: 2,593 passed, zero test failures; two existing ignored
   data-generation tests. The focused tests overlap the full suite.
@@ -178,18 +206,19 @@ Toolchain: OpenJDK 21.0.12.1+1, Scala 2.13.18 and sbt 1.9.8.
   accepted-prefix reservation cases passed. These supplemental probes are not part of the
   in-repository commands below; they do not count toward the full-suite total.
 
-The results apply to the reviewed implementation; documentation and two test comments were
-subsequently prepared for publication without changing executable sources or test assertions.
-One independent full-gate invocation failed during Scala configuration-reader compilation
+One historical independent full-gate invocation failed during Scala configuration-reader compilation
 at `CurrencyL0App.scala:136`, with `scala.reflect.internal.FatalError` and an
 `IterableFactory.apply` argument-count error. A fresh-process rerun with identical source
 and command passed. The cause remains unestablished; the rerun is not a compiler fix.
 
-Run each command sequentially, not concurrently in the same build directory:
+### Reproduction commands
+
+Run each command sequentially, not concurrently in the same build directory. The expanded
+focused selection includes the dependency and dynamic-reader regressions:
 
 ```bash
 CI=1 sbt -Dsbt.log.noformat=true \
-  'nodeShared/testOnly *BurnSnapshotAcceptanceSuite *BurnActionValidatorSuite *FieldsAddedOrdinalsSuite *ConsensusOrdinalConfigSuite' \
+  'nodeShared/testOnly *BurnSnapshotAcceptanceSuite *BurnActionValidatorSuite *FieldsAddedOrdinals*Suite *ConsensusOrdinalConfigSuite *BalanceOpsManagerFeeTxsSuite *SpendActionValidatorSuite *FeeTransactionValidatorSuite *GlobalSnapshotOpsManagerRecoverySuite' \
   'shared/testOnly *BurnActionCodecSuite'
 
 CI=1 sbt -Dsbt.log.noformat=true \

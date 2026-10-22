@@ -103,6 +103,38 @@ class GlobalSnapshotOpsManager[F[_]: Async](
     mode: DependencyMode,
     deterministicProcessedHistory: Boolean
   ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] =
+    getLastGlobalSnapshotsSpendActionsWithConsumed(
+      globalSnapshotViewOrdinal,
+      lastGlobalSnapshots,
+      getGlobalSnapshotByOrdinal,
+      currencyId,
+      metagraphSyncData,
+      currentCurrencySnapshotOrdinal,
+      previousGlobalSyncView,
+      previouslyDeclared,
+      lastUnsyncGlobalSnapshotOrdinal,
+      updatedLastSyncGlobalFromPeersInConsensus,
+      mode,
+      deterministicProcessedHistory
+    ).map { case (actions, declared, _) => (actions, declared) }
+
+  // Keep the historical declaration separate from the dependencies actually consumed in this
+  // invocation. Legacy same-ordinal recreation reconsumes its cached dependencies but declares
+  // only newlyRequired; changing that declaration would change historical signed artifacts.
+  private[currency] def getLastGlobalSnapshotsSpendActionsWithConsumed(
+    globalSnapshotViewOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    currencyId: Address,
+    metagraphSyncData: Option[SortedMap[Address, snapshot.MetagraphSyncDataInfo]],
+    currentCurrencySnapshotOrdinal: SnapshotOrdinal,
+    previousGlobalSyncView: Option[GlobalSyncView],
+    previouslyDeclared: SortedSet[SnapshotOrdinal],
+    lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal,
+    mode: DependencyMode,
+    deterministicProcessedHistory: Boolean
+  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal], SortedSet[SnapshotOrdinal])] =
     if (deterministicProcessedHistory)
       getDeterministicSpendActions(
         globalSnapshotViewOrdinal,
@@ -115,7 +147,7 @@ class GlobalSnapshotOpsManager[F[_]: Async](
         lastUnsyncGlobalSnapshotOrdinal,
         updatedLastSyncGlobalFromPeersInConsensus,
         mode
-      )
+      ).map { case (actions, cumulative) => (actions, cumulative, cumulative) }
     else
       getLegacySpendActions(
         globalSnapshotViewOrdinal,
@@ -202,9 +234,9 @@ class GlobalSnapshotOpsManager[F[_]: Async](
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
     updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal,
     mode: DependencyMode
-  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] =
+  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal], SortedSet[SnapshotOrdinal])] =
     metagraphSyncData.flatMap(_.get(currencyId)) match {
-      case None => (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal]).pure[F]
+      case None => (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal], SortedSet.empty[SnapshotOrdinal]).pure[F]
       case Some(syncDataInfo) =>
         for {
           processed <- globalSnapshotsAlreadyProcessed.get
@@ -216,7 +248,7 @@ class GlobalSnapshotOpsManager[F[_]: Async](
           required = (alreadyForCurrent ++ newlyRequired).toSet
           result <-
             if (required.isEmpty)
-              (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal]).pure[F]
+              (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal], SortedSet.empty[SnapshotOrdinal]).pure[F]
             else
               for {
                 snapshots <- required.toList.sorted.traverse { ordinal =>
@@ -247,7 +279,7 @@ class GlobalSnapshotOpsManager[F[_]: Async](
                     .toMap
                   current.updated(currencyId, updatedByOrdinal)
                 }
-              } yield (spendActions, newlyRequired)
+              } yield (spendActions, newlyRequired, SortedSet.from(required))
         } yield result
     }
 

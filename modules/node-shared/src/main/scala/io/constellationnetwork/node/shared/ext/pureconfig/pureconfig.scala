@@ -72,7 +72,8 @@ package object pureconfig {
     genericMapReader(catchReadError(AppEnvironment.withName))
   // FieldsAddedOrdinals has more fields than forProductN (and Scala 2 FunctionN) supports, so it is built with named
   // arguments: a field cannot be wired to another gate's key. Historical keys remain required; the appended burn
-  // gate is optional and disabled when absent. Unknown keys are ignored. FieldsAddedOrdinalsReaderSuite checks that each field is read from its own kebab-case key.
+  // gate is optional and disabled when absent. Unknown keys are ignored. FieldsAddedOrdinalsReaderSuite checks that
+  // each field is read from its own kebab-case key.
   implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
     ConfigReader.fromCursor { cursor =>
       cursor.asObjectCursor.flatMap { gates =>

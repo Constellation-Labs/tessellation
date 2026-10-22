@@ -73,7 +73,27 @@ object FieldsAddedOrdinalsReaderSuite extends SimpleIOSuite {
     )
   }
 
-  ordinalGateFields.foreach {
+  pureTest("a missing burn-action-activation key is disabled without changing historical gates") {
+    load(distinctConfig.withoutPath(s"$root.burn-action-activation")).fold(
+      errors => failure(s"configuration failed to load: $errors"),
+      loaded =>
+        expect.same(Map.empty[AppEnvironment, SnapshotOrdinal], loaded.burnActionActivation) &&
+          expect.same(
+            AppEnvironment.values
+              .map(environment =>
+                environment -> distinctOrdinal(ordinalGateFields.find(_._1 == "fixingSpendActionAggregateBalance").get._2, environment)
+              )
+              .toMap,
+            loaded.fixingSpendActionAggregateBalance
+          )
+    )
+  }
+
+  pureTest("a malformed optional burn gate rejects rather than becoming disabled") {
+    expect(load(raw.withValue(s"$root.burn-action-activation", ConfigValueFactory.fromAnyRef("invalid"))).isLeft)
+  }
+
+  ordinalGateFields.filterNot(_._1 == "burnActionActivation").foreach {
     case (field, _) =>
       pureTest(s"a missing ${keyOf(field)} key fails loading and is named in the error") {
         load(raw.withoutPath(s"$root.${keyOf(field)}")).fold(

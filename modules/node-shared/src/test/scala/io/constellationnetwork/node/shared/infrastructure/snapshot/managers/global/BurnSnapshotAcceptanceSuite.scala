@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -222,7 +223,13 @@ object BurnSnapshotAcceptanceSuite extends MutableIOSuite {
     } yield Services(creator, validator, processor, validators.spendActionValidator)
   }
 
-  private def create(f: Fixture, services: Services, actions: SortedSet[SharedArtifact], messages: List[Signed[CurrencyMessage]] = Nil)(
+  private def create(
+    f: Fixture,
+    services: Services,
+    actions: SortedSet[SharedArtifact],
+    messages: List[Signed[CurrencyMessage]] = Nil,
+    fees: Option[SortedSet[Signed[FeeTransaction]]] = None
+  )(
     implicit h: Hasher[IO]
   ): IO[CurrencySnapshotCreationResult[io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent]] =
     services.creator.createProposalArtifact(
@@ -239,7 +246,7 @@ object BurnSnapshotAcceptanceSuite extends MutableIOSuite {
         .toSet,
       None,
       f.parent.proofs.toNonEmptyList.toList.map(_.id.toPeerId).toSet,
-      None,
+      fees.map(txs => () => txs),
       Some(() => actions),
       n => f.recent.find(_.ordinal == n).pure[IO],
       false,
@@ -348,6 +355,99 @@ object BurnSnapshotAcceptanceSuite extends MutableIOSuite {
         expect.same(if (spend == 0L) Balance.empty else Balance(NonNegLong.unsafeFrom(100L - spend)), c.balances(f.owner)) &&
           expect.same(spend > 0L, c.balances.get(receiver).exists(_.value.value == spend)) &&
           expect.same(created.context.snapshotInfo, c)
+    }
+  }
+
+  List(30L, 31L).foreach { burnAmount =>
+    test(s"settled spend and individually filtered fees precede burn $burnAmount with exact Global reconstruction") { res =>
+      implicit val (k, j, h, s) = res
+      for {
+        f <- fixture(spend = 60L)
+        svc <- services(f)
+        valid <- Signed.forAsyncHasher(FeeTransaction(f.owner, receiver, Amount(10L), Hash.empty), f.key)
+        invalid <- Signed.forAsyncHasher(FeeTransaction(f.owner, f.owner, Amount(90L), Hash.empty), f.key)
+        created <- create(f, svc, SortedSet(burn(f.owner, burnAmount)), fees = Some(SortedSet(valid, invalid)))
+        signed <- Signed.forAsyncHasher(created.artifact, f.key)
+        validation <- svc.validator.validateSignedSnapshot(f.parent, f.context, signed, n => f.recent.find(_.ordinal == n).pure[IO])
+        differingFields = validation.fold(
+          _.toList.map {
+            case SnapshotDifferentThanExpected(expected, actual) =>
+              expected.productElementNames
+                .zip(expected.productIterator.zip(actual.productIterator))
+                .collect { case (name, (left, right)) if left != right => name }
+                .mkString(",")
+            case error => error.getClass.getSimpleName
+          }.mkString(";"),
+          _ => "valid"
+        )
+        output <- event(f, created.artifact)
+        global <- acceptGlobal(f, svc, f.info, List(output))
+        accepted = global.lastCurrencySnapshots(f.owner).toOption.get
+        independentSvc <- services(f)
+        independentlyAccepted <- acceptGlobal(f, independentSvc, f.info, List(output))
+        proof <- accepted._2.stateProof[IO](accepted._1.ordinal)(implicitly, implicitly, h, j, currencyProof)
+      } yield
+        expect(validation.isValid, differingFields) &&
+          expect.same(Some(SortedSet(valid)), created.artifact.feeTransactions) &&
+          expect.same(
+            Balance(if (burnAmount == 30L) NonNegLong(0L) else NonNegLong(30L)),
+            created.context.snapshotInfo.balances(f.owner)
+          ) &&
+          expect.same(Balance(70L), created.context.snapshotInfo.balances(receiver)) &&
+          expect.same(burnAmount == 30L, created.artifact.artifacts.exists(_.contains(burn(f.owner, burnAmount)))) &&
+          expect.same(created.context.snapshotInfo, accepted._2) &&
+          expect.same(proof, accepted._1.stateProof) && expect.same(f.info.balances, global.balances) &&
+          expect.same(global, independentlyAccepted)
+    }
+  }
+
+  List(0L, 20L).foreach { burnAmount =>
+    test(s"Global running spend balance respects fee debit and burn $burnAmount across distinct actions") { res =>
+      implicit val (k, j, h, s) = res
+      val otherReceiver = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+      for {
+        f <- fixture()
+        svc <- services(f)
+        fee <- Signed.forAsyncHasher(FeeTransaction(f.owner, receiver, Amount(10L), Hash.empty), f.key)
+        spends = List(receiver, otherReceiver).map(destination =>
+          SpendAction(NonEmptyList.one(SpendTransaction(None, Some(CurrencyId(f.owner)), SwapAmount(40L), f.owner, destination)))
+        )
+        actions = SortedSet.from[SharedArtifact](spends) ++ Option.when(burnAmount > 0L)(burn(f.owner, burnAmount))
+        created <- create(f, svc, actions, fees = Some(SortedSet(fee)))
+        output <- event(f, created.artifact)
+        manager <- Mocks.mkManager(
+          Some(f.info),
+          stateChannelProcessor = Some(svc.processor),
+          spendValidator = Some(svc.spendValidator)
+        )
+        result <- manager.accept(
+          ordinal(21),
+          EpochProgress.MinValue,
+          Nil,
+          Nil,
+          Nil,
+          List(output),
+          Nil,
+          Nil,
+          Nil,
+          Nil,
+          Nil,
+          f.info,
+          SortedSet.empty,
+          SortedSet.empty,
+          Mocks.delegatedRewardsFunction[IO](f.info),
+          StateChannelValidationType.Full,
+          n => f.recent.find(_.ordinal == n).pure[IO],
+          AllowSpendBlockAcceptanceMode.live
+        )
+        accepted = result._11.getOrElse(f.owner, Nil)
+      } yield
+        expect.same(if (burnAmount == 0L) 2 else 1, accepted.size) &&
+          expect(accepted.forall(spends.contains)) &&
+          expect.same(
+            Balance(NonNegLong.unsafeFrom(90L - burnAmount)),
+            result._9.lastCurrencySnapshots(f.owner).toOption.get._2.balances(f.owner)
+          ) && expect.same(Some(SortedSet(fee)), created.artifact.feeTransactions)
     }
   }
 
@@ -803,7 +903,15 @@ object BurnSnapshotAcceptanceSuite extends MutableIOSuite {
       svc <- services(f)
       ordinary <- create(f, svc, SortedSet.empty)
       attempted <- create(f, svc, SortedSet(burn(f.owner, 100L)))
-    } yield expect.same(ordinary, attempted)
+      forgedAcknowledgment <- create(
+        f,
+        svc,
+        SortedSet[SharedArtifact](burn(f.owner, 100L), GlobalSnapshotsProcessed(SortedSet(ordinal(20))))
+      )
+    } yield
+      expect.same(ordinary, attempted) &&
+        expect.same(ordinary.context, forgedAcknowledgment.context) &&
+        expect(!forgedAcknowledgment.artifact.artifacts.exists(_.exists(_.isInstanceOf[BurnAction])))
   }
 
   test("a signed first-incremental projection cannot smuggle an unexecuted burn") { res =>

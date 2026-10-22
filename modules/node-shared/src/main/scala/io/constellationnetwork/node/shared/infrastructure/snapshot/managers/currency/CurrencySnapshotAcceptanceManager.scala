@@ -476,20 +476,21 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
     )
 
-    (globalSnapshotsSpendActions, globalSnapshotsProcessed) <- globalSnapshotOps.getLastGlobalSnapshotsSpendActions(
-      globalSyncView.ordinal,
-      lastGlobalSnapshots,
-      getGlobalSnapshotByOrdinal,
-      metagraphId,
-      lastUnsyncMetagraphSyncData,
-      snapshotOrdinal,
-      maybeLastGlobalSyncView,
-      previouslyProcessedGlobalSnapshots,
-      lastUnsyncGlobalSnapshot.ordinal,
-      updatingCombineFunctionSpendActions,
-      dependencyMode,
-      deterministicProcessedHistory = deterministicHistoryActive
-    )
+    (globalSnapshotsSpendActions, globalSnapshotsProcessed, consumedGlobalSnapshots) <- globalSnapshotOps
+      .getLastGlobalSnapshotsSpendActionsWithConsumed(
+        globalSyncView.ordinal,
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal,
+        metagraphId,
+        lastUnsyncMetagraphSyncData,
+        snapshotOrdinal,
+        maybeLastGlobalSyncView,
+        previouslyProcessedGlobalSnapshots,
+        lastUnsyncGlobalSnapshot.ordinal,
+        updatingCombineFunctionSpendActions,
+        dependencyMode,
+        deterministicProcessedHistory = deterministicHistoryActive
+      )
 
     metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
       case (_, spendActions) =>
@@ -652,10 +653,11 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     // GL0 may already have committed a spend that this Currency sync view has not yet
     // consumed. Do not destroy its backing balance while such dependencies remain.
-    // Both current and carried acknowledgments come from the canonical acceptance path
-    // and the signed parent, never from a caller's new GlobalSnapshotsProcessed claim.
+    // Consumed dependencies come from this invocation's canonical spend path, including
+    // legacy same-ordinal recreation. Its newly emitted acknowledgment can be empty even
+    // after reconsumption. Never trust a caller's new GlobalSnapshotsProcessed claim.
     pendingBurnDependencies = lastUnsyncMetagraphSyncData.flatMap(_.get(metagraphId)).exists { syncData =>
-      (syncData.unappliedGlobalChangeOrdinals -- globalSnapshotsProcessed -- previouslyProcessedGlobalSnapshots).nonEmpty
+      (syncData.unappliedGlobalChangeOrdinals -- consumedGlobalSnapshots -- previouslyProcessedGlobalSnapshots).nonEmpty
     }
     burns = BurnActionValidator.accept(
       acceptedSharedArtifacts.collect { case burn: BurnAction => burn },
