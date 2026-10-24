@@ -526,38 +526,23 @@ abstract class CurrencyL0App(
                               )
                             )
                             // Rollback can outlive the initial Global L0 pull. Refresh the canonical
-                            // anchor and its retained window after rollback completes, but suppress
-                            // ordinary sync publication until the one required recovery declaration
-                            // is constructed below.
-                            _ <- StateChannel.performGlobalL0SnapshotProcess(
-                              storages,
-                              sharedStorages,
-                              services,
-                              dataApplicationService,
-                              keyPair,
-                              mkCell,
-                              publishSyncEvents = false
-                            )
-                            globalAnchor <- storages.lastSyncGlobalSnapshot.get.flatMap(
-                              _.liftTo[IO](new IllegalStateException("Cannot arm recovery sync refresh without a current Global L0 anchor"))
-                            )
-                            recentGlobalSnapshots <- sharedStorages.lastNGlobalSnapshot.getLastN
-                            selectedTarget <- SnapshotOrdinal(
-                              globalAnchor.ordinal.value - cfg.shared.lastGlobalSnapshotsSync.syncOffset
-                            ).liftTo[IO](
-                              new IllegalStateException(
-                                s"Recovery sync target underflow anchor=${globalAnchor.ordinal} offset=${cfg.shared.lastGlobalSnapshotsSync.syncOffset}"
-                              )
-                            )
-                            recentByOrdinal = recentGlobalSnapshots.iterator.map(value => value.ordinal -> value.hash).toMap
-                            _ <- IO.raiseUnless(
-                              recentByOrdinal.get(globalAnchor.ordinal).contains(globalAnchor.hash) &&
-                                recentByOrdinal.contains(selectedTarget)
-                            )(
-                              new IllegalStateException(
-                                s"Recovery sync requires a complete canonical recent window: anchor=${globalAnchor.ordinal} " +
-                                  s"selectedTarget=$selectedTarget available=${recentByOrdinal.keys.toList.sorted.mkString(",")}"
-                              )
+                            // anchor and its retained window after rollback completes, until this node
+                            // holds the Global state the first successor's fee context needs, but
+                            // suppress ordinary sync publication until the one required recovery
+                            // declaration is constructed below.
+                            (globalAnchor, selectedTarget) <- StateChannel.selectRecoveryGlobalAnchor[IO](
+                              StateChannel.performGlobalL0SnapshotProcess(
+                                storages,
+                                sharedStorages,
+                                services,
+                                dataApplicationService,
+                                keyPair,
+                                mkCell,
+                                publishSyncEvents = false
+                              ),
+                              storages.lastSyncGlobalSnapshot,
+                              sharedStorages.lastNGlobalSnapshot.getLastN,
+                              cfg.shared.lastGlobalSnapshotsSync.syncOffset
                             )
                             pendingPublication <- storages.recoverySyncPublication.get
                             _ <- pendingPublication match {
