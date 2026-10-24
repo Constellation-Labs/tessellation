@@ -115,6 +115,13 @@ sessions. Before starting solo consensus, it refreshes the canonical Global L0
 parent/window, publishes one signed `GlobalSnapshotSync` through the ordinary event
 mempool, and arms that exact event as mandatory in the first successor.
 
+The first successor's fee context needs the exact Global L0 state of the selected
+target, not only its hash in the retained window. The lead therefore keeps refreshing
+until it holds that state, which takes `syncOffset` further Global L0 snapshots when
+its first Global L0 pull is the anchor. Arming fails closed if the held state conflicts
+with the retained window or is still absent after the bounded wait (30 refreshes, 10
+seconds apart).
+
 | Inherited signed sync view | First-successor behavior |
 |---|---|
 | empty | ordinary chain start (`parentOrdinal = MinValue`) |
