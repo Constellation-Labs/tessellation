@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, La
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.swap.BurnActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
@@ -475,20 +476,21 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
     )
 
-    (globalSnapshotsSpendActions, globalSnapshotsProcessed) <- globalSnapshotOps.getLastGlobalSnapshotsSpendActions(
-      globalSyncView.ordinal,
-      lastGlobalSnapshots,
-      getGlobalSnapshotByOrdinal,
-      metagraphId,
-      lastUnsyncMetagraphSyncData,
-      snapshotOrdinal,
-      maybeLastGlobalSyncView,
-      previouslyProcessedGlobalSnapshots,
-      lastUnsyncGlobalSnapshot.ordinal,
-      updatingCombineFunctionSpendActions,
-      dependencyMode,
-      deterministicProcessedHistory = deterministicHistoryActive
-    )
+    (globalSnapshotsSpendActions, globalSnapshotsProcessed, consumedGlobalSnapshots) <- globalSnapshotOps
+      .getLastGlobalSnapshotsSpendActionsWithConsumed(
+        globalSyncView.ordinal,
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal,
+        metagraphId,
+        lastUnsyncMetagraphSyncData,
+        snapshotOrdinal,
+        maybeLastGlobalSyncView,
+        previouslyProcessedGlobalSnapshots,
+        lastUnsyncGlobalSnapshot.ordinal,
+        updatingCombineFunctionSpendActions,
+        dependencyMode,
+        deterministicProcessedHistory = deterministicHistoryActive
+      )
 
     metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
       case (_, spendActions) =>
@@ -649,11 +651,30 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
             }
       }
 
+    // GL0 may already have committed a spend that this Currency sync view has not yet
+    // consumed. Do not destroy its backing balance while such dependencies remain.
+    // Consumed dependencies come from this invocation's canonical spend path, including
+    // legacy same-ordinal recreation. Its newly emitted acknowledgment can be empty even
+    // after reconsumption. Never trust a caller's new GlobalSnapshotsProcessed claim.
+    pendingBurnDependencies = lastUnsyncMetagraphSyncData.flatMap(_.get(metagraphId)).exists { syncData =>
+      (syncData.unappliedGlobalChangeOrdinals -- consumedGlobalSnapshots -- previouslyProcessedGlobalSnapshots).nonEmpty
+    }
+    burns = BurnActionValidator.accept(
+      acceptedSharedArtifacts.collect { case burn: BurnAction => burn },
+      metagraphId,
+      updatedBalancesByInvalidAddressChecks,
+      maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
+      fieldsAddedOrdinals.burnActionActivationFor(environment),
+      pendingBurnDependencies
+    )
+    // The accepted artifact set and its state debit come from the same atomic checked fold.
+    sharedArtifactsAfterBurns = acceptedSharedArtifacts.filterNot(_.isInstanceOf[BurnAction]) ++ burns.accepted
+
     csi = CurrencySnapshotInfo(
       if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
         lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceBlocksResult.contextUpdate.lastTxRefs
       else transactionsRefs,
-      updatedBalancesByInvalidAddressChecks,
+      burns.balances,
       Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
       None,
       if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal) none else updatedAllowSpendRefs.some,
@@ -695,7 +716,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       messagesAcceptanceResult,
       globalSnapshotSyncAcceptanceResult,
       acceptedRewardTxs,
-      acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ globalSnapshotProcessedEvents,
+      sharedArtifactsAfterBurns ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ globalSnapshotProcessedEvents,
       acceptedFeeTxs,
       csi,
       stateProof,

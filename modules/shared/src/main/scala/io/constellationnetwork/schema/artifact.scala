@@ -15,6 +15,7 @@ import io.constellationnetwork.security.hash.Hash
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe.{Decoder, DecodingFailure, HCursor}
 
 object artifact {
   @derive(decoder, encoder, order, ordering, show)
@@ -31,6 +32,41 @@ object artifact {
     source: Address,
     destination: Address
   )
+
+  /** Burns only the emitting metagraph's own native currency from its own address. Delegated authorization and DAG currency are
+    * deliberately not representable.
+    */
+  @derive(encoder, order, ordering, show)
+  case class BurnTransaction(currencyId: CurrencyId, amount: SwapAmount, source: Address)
+
+  object BurnTransaction {
+    implicit val decode: Decoder[BurnTransaction] = Decoder.instance { cursor =>
+      strictBurnFields(cursor, Set("currencyId", "amount", "source")).flatMap { _ =>
+        for {
+          currencyId <- cursor.get[CurrencyId]("currencyId")
+          amount <- cursor.get[SwapAmount]("amount")
+          source <- cursor.get[Address]("source")
+        } yield BurnTransaction(currencyId, amount, source)
+      }
+    }
+  }
+
+  @derive(encoder, order, ordering, show)
+  case class BurnAction(burnTransactions: NonEmptyList[BurnTransaction]) extends SharedArtifact
+
+  object BurnAction {
+    implicit val decode: Decoder[BurnAction] = Decoder.instance { cursor =>
+      strictBurnFields(cursor, Set("burnTransactions"))
+        .flatMap(_ => cursor.get[NonEmptyList[BurnTransaction]]("burnTransactions").map(BurnAction(_)))
+    }
+  }
+
+  private def strictBurnFields(cursor: HCursor, fields: Set[String]): Decoder.Result[Unit] =
+    Either.cond(
+      cursor.keys.exists(_.toSet == fields),
+      (),
+      DecodingFailure("Unexpected or missing self-burn fields (delegated burns are unsupported)", cursor.history)
+    )
 
   @derive(decoder, encoder, order, ordering, show)
   case class TokenUnlock(

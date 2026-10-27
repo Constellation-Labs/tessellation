@@ -71,8 +71,9 @@ package object pureconfig {
   implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
   // FieldsAddedOrdinals has more fields than forProductN (and Scala 2 FunctionN) supports, so it is built with named
-  // arguments: a field cannot be wired to another gate's key. Like forProductN, every key is required and unknown keys
-  // are ignored. FieldsAddedOrdinalsReaderSuite checks that each field is read from its own kebab-case key.
+  // arguments: a field cannot be wired to another gate's key. Historical keys remain required; the appended burn
+  // gate is optional and disabled when absent. Unknown keys are ignored. FieldsAddedOrdinalsReaderSuite checks that
+  // each field is read from its own kebab-case key.
   implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
     ConfigReader.fromCursor { cursor =>
       cursor.asObjectCursor.flatMap { gates =>
@@ -103,6 +104,8 @@ package object pureconfig {
           fixingGlobalAllowSpendExpiration <- gate("fixing-global-allow-spend-expiration")
           fixingDelegatedStakeDoubleWithdrawal <- gate("fixing-delegated-stake-double-withdrawal")
           fixingSpendActionAggregateBalance <- gate("fixing-spend-action-aggregate-balance")
+          burnActionActivation <- ConfigReader[Option[Map[AppEnvironment, SnapshotOrdinal]]]
+            .from(gates.atKeyOrUndefined("burn-action-activation"))
         } yield
           FieldsAddedOrdinals(
             tessellation3Migration = tessellation3Migration,
@@ -127,7 +130,8 @@ package object pureconfig {
             preventingAllowSpendResurrection = preventingAllowSpendResurrection,
             fixingGlobalAllowSpendExpiration = fixingGlobalAllowSpendExpiration,
             fixingDelegatedStakeDoubleWithdrawal = fixingDelegatedStakeDoubleWithdrawal,
-            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance
+            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance,
+            burnActionActivation = burnActionActivation.getOrElse(Map.empty)
           )
       }
     }
