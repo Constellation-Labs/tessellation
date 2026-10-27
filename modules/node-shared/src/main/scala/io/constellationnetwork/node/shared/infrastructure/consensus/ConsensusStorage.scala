@@ -137,6 +137,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     effectiveLockedQc: Option[CertifiedProposalQC]
   ): F[Either[VoteRejection, CertifiedVoteLock]]
 
+  /** Atomically record a verified QC for the value being prepared; see [[CertifiedVoteLock.acceptVerifiedQc]]. */
+  def tryAdoptCertifiedQc(key: Key, qc: CertifiedProposalQC): F[Either[VoteRejection, CertifiedVoteLock]]
+
   /** Advance/read/clear the v35 semantic lock independently of the legacy artifact-only lock. */
   def advanceCertifiedLockedQc(key: Key, qc: CertifiedProposalQC): F[Unit]
   def getCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]]
@@ -899,6 +902,16 @@ object ConsensusStorage {
                   // Set memory first so even a failed disk write leaves this process conservatively locked. The returned effect fails
                   // until the same value is durable, so the caller cannot sign/store/spread an OutcomeVote after a persistence failure.
                   persistCertifiedVoteLock(key, maybeLock, newLock).as(Right(newLock))
+                case Left(rejection) => rejection.asLeft[CertifiedVoteLock].pure[F]
+              }
+            }
+          }
+
+        def tryAdoptCertifiedQc(key: Key, qc: CertifiedProposalQC): F[Either[VoteRejection, CertifiedVoteLock]] =
+          certifiedVoteLockMutex.lock.surround {
+            hydrateCertifiedVoteLock(key).flatMap { maybeLock =>
+              maybeLock.getOrElse(CertifiedVoteLock.empty).acceptVerifiedQc(qc) match {
+                case Right(newLock)  => persistCertifiedVoteLock(key, maybeLock, newLock).as(Right(newLock))
                 case Left(rejection) => rejection.asLeft[CertifiedVoteLock].pure[F]
               }
             }
