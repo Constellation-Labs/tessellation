@@ -153,12 +153,13 @@ class ConsensusFSM[F[
         case CheckTimeoutCertificateAssembly(key)     => transitions.checkTimeoutCertificateAssembly(key)
         case CheckTimeoutCertificateApply(key, from, to) =>
           transitions.checkTimeoutCertificateApply(key, from, to)
-        case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
-        case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
-        case RestartAfterSoftReset(key, attempt) => restartAfterSoftReset(key, attempt, running)
-        case _: ReleaseFirstRoundStart[_]        => Async[F].unit
-        case InternalScheduled(inner)            => handle(inner)
-        case PeerObserved(peer)                  => transitions.registerPeer(peer)
+        case CheckEvictionAssembly(key, target)                  => transitions.checkEvictionAssembly(key, target)
+        case CheckAdmissionAssembly(key, target)                 => transitions.checkAdmissionAssembly(key, target)
+        case RestartAfterSoftReset(key, attempt)                 => restartAfterSoftReset(key, attempt, running)
+        case _: ReleaseFirstRoundStart[_]                        => Async[F].unit
+        case NormalFirstRoundFallback(permit, origin, requestId) => transitions.normalFirstRoundFallback(permit, origin, requestId)
+        case InternalScheduled(inner)                            => handle(inner)
+        case PeerObserved(peer)                                  => transitions.registerPeer(peer)
 
         case _ if running => handleWhileBusy(cmd)
         case _            => handleWhileIdle(cmd)
