@@ -336,6 +336,13 @@ community validators reconstruct the canonical reset root from the certificate
 and independently validated public parent, then replay the latest contiguous
 recovery epoch. No private plan or second signature ceremony is required.
 
+This is also how mainnet enters certified consensus from v3.5 (ADR-0035): the
+activation ordinal is set to the rollback anchor R, the final v3.5 snapshot, so R+1 is
+the first certified round. This build has no pre-v35 engine, so startup rejects a
+rollback anchor below activation (`RollbackAnchorBelowCertifiedActivation`, `Main.scala`)
+and a node never produces a key below activation
+(`CertifiedConsensusNotActiveForProduction`, `GlobalSnapshotConsensusStateCreator.scala`).
+
 Rc.12 aligns an established GL0 anchor committee before the first ordinary
 post-rollback round. The rollback lead waits for an exact `Q(N)` of anchor
 proof signers with no timeout escape; members of that set wait for the first
@@ -513,7 +520,7 @@ CollectingSignatures
 | CollectingSignatures | Quorum of valid `MajoritySignature`s | Everyone |
 | Finished | Outcome persisted with deduplicated proofs | - |
 
-> **Note (multi-committee quorum):** The advancer transitions when `max(1, QuorumPolicy.fromFraction(N, config.quorumThresholdFraction))` matching declarations are present, where **`N = state.coreFacilitators.value.size`** (the **Core** committee, not the flat round-start set) (`QuorumPolicy.scala`, `state/ConsensusState.scala:207`). `QuorumPolicy.fromFraction` is pure **integer** arithmetic: it dispatches `1.0 -> unanimity(N) = N` and `0.6666...(2/3) -> supermajority(N) = (2*N + 2) / 3` (verified in `QuorumPolicySuite` to equal the legacy `ceil(N * fraction)` for every operated cluster size); any other fraction is rejected at config load. Tier-1 and Witness peers do **not** count toward the cert/phase quorum denominator, so a silent Tier-1 peer cannot wedge a round (see [§9](#9-facilitator-selection)). Default `quorumThresholdFraction = 1.0` (unanimity); testnet operates at supermajority. On testnet the v33 `QuorumDenominatorShrink` rung can deterministically lower this denominator at a wedged key after a wall-clock-anchored silence period, leaving the committee byte-identical (see [quorum-shrink.md](quorum-shrink.md)). Snapshot finalization itself is gated by the `SignatureGraceDecision` grace machine (see [§15](#15-signature-threshold)) so late-but-honest signatures still land in the proofs set. Liveness is provided by `StallDetector` view-changing (VCC + TimeoutCertificate) or vote-evicting unresponsive peers when safe (see [§10](#10-leader-election--view-changes) and [§11](#11-stall-detection--eviction)).
+> **Note (multi-committee quorum):** The advancer transitions when `max(1, QuorumPolicy.fromFraction(N, config.quorumThresholdFraction))` matching declarations are present, where **`N = state.coreFacilitators.value.size`** (the **Core** committee, not the flat round-start set) (`QuorumPolicy.scala`, `state/ConsensusState.scala:207`). `QuorumPolicy.fromFraction` is pure **integer** arithmetic: it dispatches `1.0 -> unanimity(N) = N` and `0.6666...(2/3) -> supermajority(N) = (2*N + 2) / 3` (verified in `QuorumPolicySuite` to equal the legacy `ceil(N * fraction)` for every operated cluster size); any other fraction is rejected at config load. Tier-1 and Witness peers do **not** count toward the cert/phase quorum denominator, so a silent Tier-1 peer cannot wedge a round (see [section 9](#9-facilitator-selection)). Default `quorumThresholdFraction = 1.0` (unanimity); testnet operates at supermajority. The former v33 `QuorumDenominatorShrink` rung that could lower this denominator at a wedged key was removed with the pre-v35 Global L0 engine (ADR-0035 / #1627); on Global L0 the commit gate is `FinalityQuorum.required`, which applies the frozen-committee floor in every round including bootstrap (`clusterFloorActive = true`, see [section 15](#15-signature-threshold)). Snapshot finalization itself is gated by the `SignatureGraceDecision` grace machine (see [section 15](#15-signature-threshold)) so late-but-honest signatures still land in the proofs set. Liveness is provided by `StallDetector` view-changing (VCC + TimeoutCertificate) or vote-evicting unresponsive peers when safe (see [section 10](#10-leader-election--view-changes) and [section 11](#11-stall-detection--eviction)).
 
 ---
 
@@ -814,9 +821,9 @@ Delegated rewards use the frozen round-start signing committee, not
 `lastArtifact.proofs`: Core and Tier 1 split the validator pool evenly, with no
 Core-vs-Tier-1 stratification. Classic rewards remain proof/signer based. See
 [Consensus reward recipients](rewards.md) for the two ordinal/epoch gates and the
-IntegrationNet diagnosis. The full-committee correction is itself activated by
-`fields-added-ordinals.delegated-rewards-full-committee`; below that gate the briefly
-deployed score filter remains solely for replay compatibility.
+IntegrationNet diagnosis. The former `delegated-rewards-full-committee` gate and its
+legacy score filter were deleted (ADR-0035 / #1627): the filter never produced mainnet
+history, so delegated rewards always pay the full frozen committee.
 
 ### Candidate Registration
 
@@ -914,11 +921,11 @@ Both gates carry the `minLeaderPoolSize` fallback: if applying a gate would drop
 When `StallDetector` invokes `ViewChangeManager.performViewChange(key, state, timeoutReason)` (`engine/ViewChangeManager.scala:80`), it emits **both** votes and queues **both** assembly checks:
 
 1. Record peer quality for the old leader.
-2. Read any locally-held `VoteLock` and pull `lockedQc` (the highest known `ProposalQC`) so the next leader can inherit a vote-locked proposal hash.
+2. Set `highestKnownQc = None`: the artifact-only `ProposalQC` pacemaker carry was a pre-v35 authority and was retired with the legacy engine (ADR-0035 / #1627). Certified cross-view safety travels in the verified `CertifiedProposalQC` held by `CertifiedVoteLock`.
 3. **Track 1 (VCC):** delegate to a `ViewChangeVoter` (typically `GossipingViewChangeVoter`) to sign+store+gossip a `ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc)`, then queue `CheckViewChangeAssembly(key)`.
 4. **Track 2 (TC):** delegate to a `TimeoutVoter` (typically `GossipingTimeoutVoter`) to sign+store+gossip a `TimeoutVote(...same fields..., reason)` where `reason` is the `TimeoutReason` (`NoProgress` or `QuorumInfeasible`), then queue `CheckTimeoutCertificateAssembly(key)`.
 
-Whichever certificate (`ViewChangeCertificate` or `TimeoutCertificate`) assembles first deterministically advances the round's view. A view greater than 0 must be justified by **exactly one** of a VCC or a TC on the leader's proposal; the two are mutually exclusive on any single proposal. Both carry the highest known `ProposalQC` so the inheriting leader keeps any vote-locked proposal hash. See [timeout-certificate.md](timeout-certificate.md) for the full TC pipeline.
+Whichever certificate (`ViewChangeCertificate` or `TimeoutCertificate`) assembles first deterministically advances the round's view. A view greater than 0 must be justified by **exactly one** of a VCC or a TC on the leader's proposal; the two are mutually exclusive on any single proposal. Both certificate types keep a `highestKnownQc` field (now always empty on emitted votes, see step 2). See [timeout-certificate.md](timeout-certificate.md) for the full TC pipeline.
 
 The `facilitatorsHash` signed into every vote is the **canonical round-start committee hash** (`state.roundStartFacilitators.value.hash`), so honest nodes that observed different mid-round withdrawals still produce votes with the same hash and certify together. `roundStartFacilitators` is frozen at round creation and never mutated; the read-site comment in `state/ConsensusState.scala` enumerates which derivations must use it versus which must keep mutable `state.facilitators` (in-round liveness).
 
@@ -930,11 +937,11 @@ The `facilitatorsHash` signed into every vote is the **canonical round-start com
 2. Atomically advances `state.viewNumber → toView`, sets `state.leader` to the deterministic new leader, **clears `withdrawnFacilitators`** (a withdrawal is scoped to the `(key, view)` pair it was emitted for), and resets `state.status` to a fresh `CollectingFacilities`.
 3. Queues `CheckUpdate(key)` so the new view's facility-collection round begins immediately.
 
-The witness pool for the quorum is widened to `state.eligibleFacilitators - target` so eligible-but-not-active peers can still witness (see [§11](#11-stall-detection--eviction), "Witness Pool Widening").
+Only single-proof votes from members of the frozen Core are counted, against `CertifiedConsensus.requiredCoreQuorum` (`StateTransitions.certificateQuorum`, shared with TC). The wider witness pool no longer applies to VCC/TC.
 
 ### TimeoutCertificate Assembly + Apply (`StateTransitions.checkTimeoutCertificateAssembly` / `...Apply`)
 
-The Track-2 counterpart. `checkTimeoutCertificateAssembly(key)` runs whenever a `TimeoutVote` lands in storage; on a Core-quorum of matching `(fromView, toView)` votes it assembles a `TimeoutCertificate` via `TimeoutCertificateBuilder` (`StateTransitions.scala:343`). When a leader's `Proposal.timeoutCertificate` arrives at a view advance, `checkTimeoutCertificateApply(key, from, to)` re-validates it against the same quorum / witness-pool / hash invariants and applies it (`StateTransitions.scala:488`, `applyCertifiedTimeoutCertificate` at `:725`). Both tracks feed the v33 `QuorumDenominatorShrink` decision so the effective denominator can be lowered at a wedged key (see [quorum-shrink.md](quorum-shrink.md)).
+The Track-2 counterpart. `checkTimeoutCertificateAssembly(key)` runs whenever a `TimeoutVote` lands in storage; on a frozen-Core quorum of matching `(fromView, toView)` votes it assembles a `TimeoutCertificate` via `TimeoutCertificateBuilder`. When a leader's `Proposal.timeoutCertificate` arrives at a view advance, `checkTimeoutCertificateApply(key, from, to)` re-validates it against the same frozen-Core quorum / hash invariants and applies it (`applyCertifiedTimeoutCertificate`). Neither track lowers the quorum denominator; the v33 `QuorumDenominatorShrink` rung was removed (ADR-0035 / #1627, [quorum-shrink.md](quorum-shrink.md)).
 
 Mid-round eviction does NOT happen on either view-change path. If a facilitator is genuinely unreachable, the stall-cycle abandonment path in `StallDetector` handles it (the round is abandoned and retried with the current eligibility set). For consensus-witnessed eviction, see B1 below.
 
@@ -1014,16 +1021,14 @@ The first stall timeout warns only — peers get one more cycle. Eviction-vote e
 val activeCore   = state.coreFacilitators.value.toSet -- state.withdrawnFacilitators.value
 val coreRemaining = activeCore.size - activeCore.intersect(missingPeers).size
 val baseRequired  = math.max(1, QuorumPolicy.fromFraction(activeCore.size, config.quorumThresholdFraction))
-// v33 shrink: an escalated rung may lower (never raise) the required quorum.
-val coreRequired  = quorumOverride.fold(baseRequired)(o => math.min(baseRequired, math.max(1, o)))
-val quorumInfeasible = coreRemaining < coreRequired
+val quorumInfeasible = coreRemaining < baseRequired
 ```
 
 Computing over `activeCore` (not the flat facilitator set) matters when facilitator subsetting is active: with Core=3, 1 missing, `coreRemaining = 2` — we don't want to flag QUORUM_INFEASIBLE just because cluster-Ready is 5. The check is a **ceiling, not a floor on aggregate evictions**: `selectEvictionTargets` separately caps each round's vote emission at `committee.size - minQuorum` so the certified evictions can never shrink the next-round committee below quorum (commit `3ee1800d3`, "Eviction targets capped").
 
 ### Witness Pool Widening (commit `e1bdfb190`, "v9")
 
-For both B1 and B2 cert assembly the **witness pool** is `state.eligibleFacilitators.value.toSet - target` rather than `state.facilitators` (the active committee). Quorum is still pegged to committee size. This admits signatures from eligible-but-not-active peers (e.g., chronic-excluded peers that the chronic filter held out of the round), which closes the apr29 wedge at ord 3110065: 3 chronic-excluded peers signed valid eviction votes that the committee gate threw away, leaving 4 of the 7 needed votes. Build-time rejection codes still say `voter_not_in_committee` / `signer_not_in_committee` for log-grep compatibility — the semantics changed but the log strings did not.
+Historically, for both B1 and B2 cert assembly the **witness pool** is `state.eligibleFacilitators.value.toSet - target` rather than `state.facilitators` (the active committee). Quorum is still pegged to committee size. This admits signatures from eligible-but-not-active peers (e.g., chronic-excluded peers that the chronic filter held out of the round), which closes the apr29 wedge at ord 3110065: 3 chronic-excluded peers signed valid eviction votes that the committee gate threw away, leaving 4 of the 7 needed votes. Build-time rejection codes still say `voter_not_in_committee` / `signer_not_in_committee` for log-grep compatibility -- the semantics changed but the log strings did not. On Global L0 today this lane is largely historical: under `RetainSigningLeases` (`allowsCertifiedAtomicReplacement = true`) admission certificates, probation included, and atomic-replacement evictions are Core-attested (`AdmissionVoterPool`, `EvictionVoterPool`), and VCC/TC count only frozen-Core voters (ADR-0035 / #1627).
 
 ### B2 Sticky Probation (commit `bc8d58d36`, "v12")
 
@@ -1455,11 +1460,12 @@ Two distinctions matter:
 - **The normal liveness denominator is the Core committee**, not the flat facilitator
   set. Phase transitions and VCC/TC/B1/B2 liveness certificates use
   `max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))` over Core
-  (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority), with the quorum-shrink
-  decision allowed to reduce liveness thresholds at a wedged key. Post-bootstrap
-  snapshot finality is stricter: it uses `quorumFinalityDecision`, counting signatures
-  over the frozen `roundStartFacilitators` committee and clamping the required quorum to
-  the frozen-committee floor.
+  (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority); nothing lowers it at a
+  wedged key (the quorum-shrink rung was removed by ADR-0035 / #1627). Snapshot
+  finality is stricter: it uses `finalityQuorum` (`FinalityQuorum.required`), counting
+  signatures over the frozen `roundStartFacilitators` committee and clamping the
+  required quorum to the frozen-committee floor. Global L0 applies this floor in every
+  round, including bootstrap (`clusterFloorActive = true`).
 - **Config split.** `tier1SignatureGracePeriod` is the short Tier-1 grace window;
   `signatureGracePeriod` is the longer Core-incomplete window. The grace machine is the
   pure decision; the caller owns the per-round `Stamp` in a `Ref` and applies the
@@ -1597,10 +1603,9 @@ them to follow consensus without participating as a facilitator.
 | `TierTransitions.scala` | Tier-demotion hysteresis (Core peer demoted after `DemotionConsecutiveMisses` missed signer sets) |
 | `LeaderEligibility.scala` | Leader-pool gates over Core: graduated + recent-signer |
 | `SignatureGraceDecision.scala` | Pure three-way finalization grace machine ([signature-grace.md](signature-grace.md)) |
-| `state/QuorumDenominatorShrink.scala` | v33 quorum-denominator shrink rung ([quorum-shrink.md](quorum-shrink.md)) |
+| `state/FinalityQuorum.scala` | Core liveness quorum and ADR-0021 frozen-committee finality floor (`coreQuorum`, `required`) |
 | `state/QuorumPolicy.scala` | Integer Core-quorum derivation `fromFraction(coreSize, quorumThresholdFraction)` (`unanimity` / `(2*n + 2) / 3` supermajority) |
 | `PeerQualityTracker.scala` | Score-based peer assessment |
-| `TrailingCommonAncestorFilter.scala` | Proof-based peer quality, removal penalties (historical; superseded by `CommitteeBuilder` tiering) |
 
 ### Global Snapshot Specific (`dag-l0/infrastructure/snapshot/`)
 
@@ -1642,11 +1647,12 @@ them to follow consensus without participating as a facilitator.
 | [0018-supermajority-quorum-and-between-round-eviction.md](../adr/0018-supermajority-quorum-and-between-round-eviction.md) | Quorum and between-round eviction |
 | [0019-tiered-committee-and-participation-evidence.md](../adr/0019-tiered-committee-and-participation-evidence.md) | Tiered committee and signed evidence |
 | [0020-two-track-view-change.md](../adr/0020-two-track-view-change.md) | View-change and timeout certificates |
-| [0021-quorum-shrink-and-finality-floor.md](../adr/0021-quorum-shrink-and-finality-floor.md) | Quorum shrink and finality floor |
+| [0021-quorum-shrink-and-finality-floor.md](../adr/0021-quorum-shrink-and-finality-floor.md) | Quorum shrink (removed) and finality floor (kept) |
 | [0022-eviction-and-readmission-certificates.md](../adr/0022-eviction-and-readmission-certificates.md) | Eviction and admission certificates |
 | [0023-recovery-fork-safety-gate.md](../adr/0023-recovery-fork-safety-gate.md) | Recovery fork-safety gate |
 | [0027-operating-invariants.md](../adr/0027-operating-invariants.md) | Cross-cutting operating invariants |
 | [0028-delegated-validator-reward-recipients.md](../adr/0028-delegated-validator-reward-recipients.md) | Delegated validator reward recipients |
+| [0035-v35-to-v41-mainnet-migration.md](../adr/0035-v35-to-v41-mainnet-migration.md) | v3.5 -> v4.1 mainnet migration; removal of the pre-v35 GL0 engine |
 
 ### Further Reading (current mechanism docs)
 
@@ -1655,7 +1661,7 @@ them to follow consensus without participating as a facilitator.
 | [committee-tiers.md](committee-tiers.md) | Three-tier Core / Tier-1 / Witness committee model ([§9](#9-facilitator-selection)) |
 | [rewards.md](rewards.md) | Classic vs delegated reward recipients, activation gates, and IntegrationNet diagnostics |
 | [timeout-certificate.md](timeout-certificate.md) | Track-2 timeout-certificate view advance ([§10](#10-leader-election--view-changes)) |
-| [quorum-shrink.md](quorum-shrink.md) | v33 quorum-denominator shrink liveness rung ([§5](#5-consensus-round-phases), [§15](#15-signature-threshold)) |
+| [quorum-shrink.md](quorum-shrink.md) | Removed v33 quorum-denominator shrink rung (stub; ADR-0035) |
 | [signature-grace.md](signature-grace.md) | `SignatureGraceDecision` finalization grace machine ([§15](#15-signature-threshold)) |
 
 ---

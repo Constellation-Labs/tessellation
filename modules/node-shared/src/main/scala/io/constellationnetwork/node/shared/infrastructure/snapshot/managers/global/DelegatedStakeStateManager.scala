@@ -108,19 +108,24 @@ object DelegatedStakeStateManager {
             }
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
-        // Keep expired withdrawals in pending state if their token lock is no longer active
+        // A due withdrawal whose lock is replaced in this snapshot is rewritten to the NEW reference above. NEW only becomes
+        // last-active at R+1, so the withdrawal is carried in pending for one round and settles there.
+        replacementRefs = replacementTokenLocks.values.map(_.hash).toSet
+        isCarriedByReplacement = (withdrawal: PendingDelegatedStakeWithdrawal) =>
+          !activeTokenLocksByRef.contains(withdrawal.tokenLockRef) && replacementRefs.contains(withdrawal.tokenLockRef)
+
+        // Every other expired withdrawal stays in `expired` even when its token lock is gone (an orphan), exactly as on
+        // release/mainnet. Below removing-processed-delegated-stake-withdrawals (#1498) unlock generation then fails with
+        // "Token lock not found", as v3.5 did; at/after it unlock generation skips the orphan, its recorded rewards are paid on
+        // the legacy path and acceptance removes its reference from pending (see GlobalSnapshotAcceptanceManager).
+        keepPending = isCarriedByReplacement
+
         finalUnexpiredWithdrawals = unexpiredWithdrawals |+| expiredWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filter { withdrawal =>
-              !activeTokenLocksByRef.contains(withdrawal.tokenLockRef)
-            }
+          case (address, withdrawals) => address -> withdrawals.filter(keepPending)
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
         finalExpiredWithdrawals = expiredWithdrawals.map {
-          case (address, withdrawals) =>
-            address -> withdrawals.filter { withdrawal =>
-              activeTokenLocksByRef.contains(withdrawal.tokenLockRef)
-            }
+          case (address, withdrawals) => address -> withdrawals.filterNot(keepPending)
         }.filter { case (_, withdrawalList) => withdrawalList.nonEmpty }
 
       } yield

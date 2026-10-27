@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Status
 
-Accepted
+Accepted; superseded in part by [ADR-0035](0035-v35-to-v41-mainnet-migration.md) (decision 1 removed, decision 2 kept)
 
 ## Context
 
@@ -34,3 +34,23 @@ The effects of liveness certificates are transitively safe because they only *la
 Source: the two-decision split lives in `ConsensusStateAdvancer.scala` (the `clusterFloorActive` gate selecting the frozen `roundStartFacilitators` committee versus Core as the phase-gate universe) and `QuorumDenominatorShrink.decide`; gl0 and ml0 set `clusterFloorActive = !isInBootstrap`.
 
 Mechanism reference: `docs/consensus/quorum-shrink.md`.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+Decision 1, the liveness quorum-denominator shrink rung, is removed together with the pre-v35
+Global L0 engine. `QuorumDenominatorShrink`, the `quorum-shrink-activation-views` knob and the
+`dag_consensus_quorum_shrink_*` metrics no longer exist. Certified consensus (ADR-0032) never lowers
+the quorum denominator at a stuck key: under more than `f` failures of the frozen committee the round
+halts, which is the outcome decision 2 already forced outside bootstrap.
+
+Decision 2, the finality floor, is kept. `FinalityQuorum.required`
+(`node-shared/.../infrastructure/consensus/state/FinalityQuorum.scala`) returns
+`max(coreQuorum, clusterFloor)` over the frozen `roundStartFacilitators`, and
+`ConsensusStateAdvancer` still selects the phase-gate universe from `clusterFloorActive`. Global L0
+now overrides `clusterFloorActive` to a constant `true` (`GlobalSnapshotConsensusStateAdvancer.scala`),
+so the committee floor also applies during bootstrap. Liveness certificates (VCC/TC assembly and
+validation, stall feasibility) keep the Core-sized `FinalityQuorum.coreQuorum`. The base default of
+`clusterFloorActive` remains `false` for any advancer that does not override it.
+
+The `ConfigLoadSuite` consequence above is history: the knob it guarded is gone. The mechanism
+reference `docs/consensus/quorum-shrink.md` is now a removal stub.

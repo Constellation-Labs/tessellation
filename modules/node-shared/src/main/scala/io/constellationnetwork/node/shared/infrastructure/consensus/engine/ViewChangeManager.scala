@@ -54,11 +54,10 @@ object ViewChangeVoter {
   * [[io.constellationnetwork.node.shared.infrastructure.consensus.state.StateTransitions.checkViewChangeAssembly]]).
   *
   * This replaces the earlier "local-increment" view-change path (which produced split committees under racing view transitions). Safety is
-  * provided by the `VoteLock` gate at local signing time; liveness by the VCC assembly path.
+  * provided by the durable `CertifiedVoteLock` at local voting time; liveness by the VCC assembly path.
   *
-  * Mid-round facilitator eviction is not performed at this layer. Before a legacy Global L0 vote, a VCC may rotate the leader; after a
-  * vote, Global L0 deliberately holds the attempt because its artifact-only signature cannot certify a different higher-view outcome
-  * envelope. V35 replaces that hold with verified full-value QCs.
+  * Mid-round facilitator eviction is not performed at this layer. A VCC rotates the leader; verified full-value QCs carry any prior
+  * certified value across views.
   */
 class ViewChangeManager[F[_]: Async: Metrics, Key, Artifact, Ctx, Status, Outcome, Kind](
   storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
@@ -84,12 +83,9 @@ class ViewChangeManager[F[_]: Async: Metrics, Key, Artifact, Ctx, Status, Outcom
     * `CheckViewChangeAssembly` so the generic state-transitions path can assemble a quorum VCC and deterministically advance the round.
     *
     * This method does not mutate `state.viewNumber` / `state.leader` locally. Only the `checkViewChangeAssembly` path — triggered once
-    * enough peers have also emitted their own `ViewChangeVote`s — advances the state. Same-key abandonment remains available only before
-    * proposal acceptance/voting; after that boundary Global L0 waits for the existing attempt or peer-ahead recovery.
+    * enough peers have also emitted their own `ViewChangeVote`s — advances the state.
     *
-    * The safety-critical vote lock lives at `storage.tryLockVote` in `buildSignatureTransition`. On the legacy wire an artifact hash does
-    * not bind the complete proposal envelope, so after any vote this method suppresses all same-key higher-view VCV/TC emission; v35
-    * replaces that conservative hold with a verified QC over the full ProposalValue.
+    * Cross-view value safety is enforced by the durable CertifiedVoteLock and a verified QC over the full ProposalValue.
     */
   private[consensus] def performViewChange(
     key: Key,
@@ -196,53 +192,30 @@ class ViewChangeManager[F[_]: Async: Metrics, Key, Artifact, Ctx, Status, Outcom
   ): F[Unit] = {
     val fromView = currentState.viewNumber.toLong
     val toView = fromView + 1L
-    val mode = storage.viewSafetyMode(currentState.certifiedConsensusActive)
-
-    storage.getVoteLock(key).flatMap {
-      case maybeLock @ Some(lock) if VoteLock.blocksLegacyViewChange(maybeLock, mode) =>
-        // A legacy artifact signature does not bind the proposal envelope. Helping to
-        // certify a higher view after voting can only create a view this node is forbidden
-        // to sign, and may help a different envelope finalize. Stay on the old attempt and
-        // keep collecting its signatures until peer-ahead recovery releases the lock.
-        ConsensusLog.warn(
-          logger,
-          Category.Phase,
-          key.toString,
-          "n/a",
-          Event.ViewChange,
-          "oldView" -> fromView.toString,
-          "newView" -> toView.toString,
-          "oldLeader" -> ConsensusLog.pid(currentState.leader),
-          "action" -> "suppressed_legacy_vote_lock",
-          "highestVotedView" -> lock.highestVotedView.fold("none")(_.toString),
-          "lockedQcView" -> lock.lockedQc.fold("none")(_.view.toString)
-        ) >>
-          Metrics[F].incrementCounter("dag_consensus_legacy_locked_view_change_suppressed_total")
-
-      case maybeLock =>
-        val highestKnownQc = maybeLock.flatMap(_.lockedQc)
-        ConsensusLog.info(
-          logger,
-          Category.Phase,
-          key.toString,
-          "n/a",
-          Event.ViewChange,
-          "oldView" -> fromView.toString,
-          "newView" -> toView.toString,
-          "oldLeader" -> ConsensusLog.pid(currentState.leader),
-          "facilitators" -> currentState.facilitators.value.size.toString
-        ) >>
-          peerQualityTracker.recordViewChange(currentState.leader) >>
-          voter.emitViewChangeVote(key, fromView, toView, highestKnownQc) >>
-          timeoutVoter.emitTimeoutVote(key, fromView, toView, highestKnownQc, timeoutReason) >>
-          // A monitor may already have sampled an AbandonRound while this serialized request was
-          // waiting in the queue. Advance the progress epoch only after both local votes have been
-          // stored/emitted. That makes such an abandon stale; the assembly commands appended below
-          // are then FIFO-ahead of any abandon sampled from the new epoch.
-          storage.markPacemakerEmissionProgress(key) >>
-          queue.offer(ConsensusCommand.CheckViewChangeAssembly(key)) >>
-          queue.offer(ConsensusCommand.CheckTimeoutCertificateAssembly(key))
-    }
+    // The artifact-only ProposalQC carried by pacemaker votes is a retired legacy authority; certified cross-view safety travels in
+    // the verified CertifiedProposalQC instead.
+    val highestKnownQc = none[ProposalQC]
+    ConsensusLog.info(
+      logger,
+      Category.Phase,
+      key.toString,
+      "n/a",
+      Event.ViewChange,
+      "oldView" -> fromView.toString,
+      "newView" -> toView.toString,
+      "oldLeader" -> ConsensusLog.pid(currentState.leader),
+      "facilitators" -> currentState.facilitators.value.size.toString
+    ) >>
+      peerQualityTracker.recordViewChange(currentState.leader) >>
+      voter.emitViewChangeVote(key, fromView, toView, highestKnownQc) >>
+      timeoutVoter.emitTimeoutVote(key, fromView, toView, highestKnownQc, timeoutReason) >>
+      // A monitor may already have sampled an AbandonRound while this serialized request was
+      // waiting in the queue. Advance the progress epoch only after both local votes have been
+      // stored/emitted. That makes such an abandon stale; the assembly commands appended below
+      // are then FIFO-ahead of any abandon sampled from the new epoch.
+      storage.markPacemakerEmissionProgress(key) >>
+      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key)) >>
+      queue.offer(ConsensusCommand.CheckTimeoutCertificateAssembly(key))
   }
 
 }

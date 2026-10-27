@@ -1,5 +1,5 @@
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/App.scala b/src/main/scala/org/constellation/snapshotstreaming/App.scala
-index 83a7d1f..39b9210 100644
+index 65e96e9..590b4ee 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/App.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/App.scala
 @@ -31,8 +31,12 @@ object App extends IOApp {
@@ -10,17 +10,17 @@ index 83a7d1f..39b9210 100644
                  implicit val gsps: GlobalStateProofSelector =
 -                  GlobalStateProofSelector(sharedCfg.lastLegacyStateProofOrdinal.getOrElse(appConfig.snapshotStreaming.environment, SnapshotOrdinal.MinValue))
 +                  GlobalStateProofSelector(
-+                    sharedCfg.lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
-+                    sharedCfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(environment, SnapshotOrdinal.MaxValue)
++                    sharedCfg.lastLegacyStateProofOrdinalFor(environment),
++                    sharedCfg.fieldsAddedOrdinals.subTrieRootsFor(environment)
 +                  )
                  implicit val csps: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
                  implicit val hasherSelector =
                    HasherSelector.forSync[IO](Hasher.forJson[IO], Hasher.forKryo[IO], hashSelect)
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala b/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
-index f51226b..c0a5d3d 100644
+index 2b760f8..c93c8ff 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
-@@ -33,9 +33,13 @@ object AppS3 extends IOApp {
+@@ -32,10 +32,14 @@ object AppS3 extends IOApp {
              KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ kryoRegistrar, migrations).use { implicit ks =>
                JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
                  val hashSelect = makeHashSelect(appConfig, sharedCfg)
@@ -30,13 +30,27 @@ index f51226b..c0a5d3d 100644
                  implicit val gsps: GlobalStateProofSelector =
 -                  GlobalStateProofSelector(sharedCfg.lastLegacyStateProofOrdinal.getOrElse(appConfig.snapshotStreaming.environment, SnapshotOrdinal.MinValue))
 +                  GlobalStateProofSelector(
-+                    sharedCfg.lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
-+                    sharedCfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(environment, SnapshotOrdinal.MaxValue)
++                    sharedCfg.lastLegacyStateProofOrdinalFor(environment),
++                    sharedCfg.fieldsAddedOrdinals.subTrieRootsFor(environment)
 +                  )
                  implicit val csps: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
                  val txHasher = Hasher.forKryo[IO]
+ 
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+index 2e61c5a..7865b49 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+@@ -126,8 +126,6 @@ object Configuration {
+       c.snapshot.size,
+       c.feeConfigs.get(env).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
+       c.lastKryoHashOrdinal,
+-      c.lastLegacyStateProofOrdinal,
+-      c.incrementalDelegatedStakingStartingOrdinal,
+       c.addresses,
+       c.allowSpends,
+       c.tokenLocks,
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala b/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
-index 17fb788..2dc2f06 100644
+index 17fb788..658a213 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
 @@ -22,13 +22,12 @@ import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClie
@@ -54,8 +68,11 @@ index 17fb788..2dc2f06 100644
  import io.constellationnetwork.security.mpt.MptRoot
  import io.constellationnetwork.security.mpt.producer.FileSystemMerklePatriciaProducer
  import io.constellationnetwork.validator.StateProofValidator
-@@ -212,28 +211,16 @@ object SnapshotProcessor {
-               result <- if( snapshot.ordinal > sharedConfigReader.lastLegacyStateProofOrdinal.getOrElse(configuration.environment, SnapshotOrdinal.MinValue)){
+@@ -211,31 +210,19 @@ object SnapshotProcessor {
+                 s"Global Snapshot ${snapshot.ordinal.value.value} with logic=${hasher.getLogic(snapshot.ordinal)}"
+               )
+ 
+-              result <- if( snapshot.ordinal > sharedConfigReader.lastLegacyStateProofOrdinal.getOrElse(configuration.environment, SnapshotOrdinal.MinValue)){
 -                val stateProof = GlobalSnapshotStateProof
 -                  .apply(
 -                    Hash.empty,
@@ -80,6 +97,7 @@ index 17fb788..2dc2f06 100644
 -                  s"Validating mptProof for ordinal ${snapshot.ordinal.value.value}"
 -                ) >>
 -                StateProofValidator.validateProof(snapshot, stateProof)
++              result <- if( snapshot.ordinal > sharedConfigReader.lastLegacyStateProofOrdinalFor(configuration.environment)){
 +                // Reuse the SDK's proof assembly. Before sub-trie-root activation its
 +                // result is byte-identical to the former mptRoot-only literal; after
 +                // activation it deterministically derives every signed per-field root
@@ -96,7 +114,7 @@ index 17fb788..2dc2f06 100644
                  validator.validate(snapshot, snapshotInfo)
                }
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
-index 2e0472c..80bee59 100644
+index 2e0472c..f00f6dd 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
 @@ -51,6 +51,8 @@ object TessellationServices {
@@ -117,12 +135,18 @@ index 2e0472c..80bee59 100644
              CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
            }
          }
-@@ -157,4 +159,5 @@ object TessellationServices {
-           configuration.fieldsAddedOrdinals.setSumFix.getOrElse(env, SnapshotOrdinal.MinValue),
+@@ -154,9 +156,9 @@ object TessellationServices {
+           updateDelegatedStakeAcceptanceManager,
+           configuration.delegatedStaking.withdrawalTimeLimit.getOrElse(env, EpochProgress.MinValue),
+           tessellation3Migration,
+-          configuration.fieldsAddedOrdinals.setSumFix.getOrElse(env, SnapshotOrdinal.MinValue),
            mptStore,
-           configuration.incrementalDelegatedStakingStartingOrdinal.getOrElse(env, SnapshotOrdinal.MinValue),
+-          configuration.incrementalDelegatedStakingStartingOrdinal.getOrElse(env, SnapshotOrdinal.MinValue),
++          configuration.incrementalDelegatedStakingStartingOrdinalFor(env),
 +          fixingAllowSpendDestinationCredit
          )
+ 
+         GlobalSnapshotContextService.make(globalSnapshotStateChannelEventsProcessor, globalSnapshotContextFns, lastNGlobalSnapshotStorage, lastGlobalSnapshotStorage)
 diff --git a/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala b/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala
 index 3b81d15..18fe202 100644
 --- a/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala
@@ -135,7 +159,7 @@ index 3b81d15..18fe202 100644
 +        None,
 +        retiredAllowSpendRefs = None
        )
-
+ 
        snapshot <- incrementalGlobalSnapshot[IO](
 @@ -194,7 +195,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
          None,
@@ -145,7 +169,7 @@ index 3b81d15..18fe202 100644
 +        None,
 +        retiredAllowSpendRefs = None
        )
-
+ 
        snapshot <- incrementalGlobalSnapshot[IO](
 @@ -256,7 +258,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
          None,
@@ -165,7 +189,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      for {
 @@ -397,7 +401,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -175,7 +199,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val newSnapshotInfo = GlobalSnapshotInfo(
 @@ -417,7 +422,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -195,7 +219,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val newSnapshotInfo = GlobalSnapshotInfo(
 @@ -548,7 +555,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -215,7 +239,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      implicit val hasher: Hasher[IO] = hs.getCurrent
 @@ -760,7 +769,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -225,7 +249,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      implicit val hasher: Hasher[IO] = hs.getCurrent
 @@ -835,7 +845,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -235,7 +259,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val newSnapshotInfo = GlobalSnapshotInfo(
 @@ -855,7 +866,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -245,7 +269,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val hasher = hs.getCurrent
 @@ -906,7 +918,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -255,7 +279,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val hasher = hs.getCurrent
 @@ -984,7 +997,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -265,7 +289,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val newSnapshotInfo = GlobalSnapshotInfo(
 @@ -1004,7 +1018,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
        None,
@@ -275,7 +299,7 @@ index 3b81d15..18fe202 100644
 +      None,
 +      retiredAllowSpendRefs = None
      )
-
+ 
      val hasher = hs.getCurrent
 diff --git a/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala b/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala
 index 5a0a3be..84ad17b 100644
@@ -289,5 +313,5 @@ index 5a0a3be..84ad17b 100644
 +    None,
 +    retiredAllowSpendRefs = None
    )
-
+ 
    private def mkInitialSnapshot()(implicit ks: KryoSerializer[IO], h: HasherSelector[IO], jsonSerializer: JsonSerializer[IO]) =

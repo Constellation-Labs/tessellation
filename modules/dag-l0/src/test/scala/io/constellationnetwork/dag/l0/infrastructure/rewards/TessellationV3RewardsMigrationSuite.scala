@@ -92,8 +92,7 @@ object TessellationV3RewardsMigrationSuite extends SimpleIOSuite with Checkers {
       updatedWithdrawDelegatedStakes = SortedMap.empty,
       nodeOperatorRewards = rewardTxs,
       reservedAddressRewards = SortedSet.empty,
-      withdrawalRewardTxs = SortedSet.empty,
-      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(amount))
+      withdrawalRewardTxs = SortedSet.empty
     )
   }
 

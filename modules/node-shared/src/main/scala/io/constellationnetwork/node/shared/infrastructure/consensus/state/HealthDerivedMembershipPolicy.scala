@@ -25,14 +25,6 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
     */
   def supportsCertifiedAtomicReplacement: Boolean
 
-  /** Membership policy for a certified VCC/timeout transition.
-    *
-    * The pre-activation and certified GL0 paths both retain the frozen signing leases. Keeping the choice explicit at the shared transition
-    * boundary prevents VCC and timeout paths from drifting if another GL0 policy is introduced later.
-    */
-  final def forCertifiedView(certifiedConsensusActive: Boolean): HealthDerivedMembershipPolicy =
-    if (certifiedConsensusActive) HealthDerivedMembershipPolicy.RetainSigningLeases else this
-
   /** Filter both newly observed and outcome-carried Facility removals through the layer policy. */
   final def persistentFacilityRemovals(healthDerivedPeers: Set[PeerId]): Set[PeerId] =
     if (allowsAutomaticRemoval) healthDerivedPeers else Set.empty
@@ -45,14 +37,13 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
   final def acceptsEvictionVotes: Boolean =
     acceptsCertifiedNextRoundEvictions || supportsCertifiedAtomicReplacement
 
-  /** Runtime receipt gate. Legacy layers retain their existing pre-state vote behavior, while retain-mode Global L0 cannot accumulate
-    * replacement evidence before v35 is active for the exact consensus key.
+  /** Runtime receipt gate: eviction votes are accepted only while a certified round exists for the exact key, so retain-mode Global L0
+    * cannot accumulate replacement evidence for a key it has not started.
     */
-  final def acceptsEvictionVotesAt(certifiedConsensusActive: Boolean): Boolean =
-    acceptsCertifiedNextRoundEvictions || (supportsCertifiedAtomicReplacement && certifiedConsensusActive)
+  final def acceptsEvictionVotesForRound(roundExists: Boolean): Boolean =
+    roundExists && acceptsEvictionVotes
 
-  final def allowsCertifiedAtomicReplacement(certifiedConsensusActive: Boolean): Boolean =
-    supportsCertifiedAtomicReplacement && certifiedConsensusActive
+  final def allowsCertifiedAtomicReplacement: Boolean = supportsCertifiedAtomicReplacement
 
   final def certifiedEvictionTargetsAllowed(certifiedTargets: Set[PeerId]): Boolean =
     certifiedTargets.isEmpty || acceptsCertifiedNextRoundEvictions

@@ -211,7 +211,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](effectiveConsensusConfig, LegacyViewChangePolicy.FreezeAfterVote, certifiedVoteLockPersistence)
+      ](effectiveConsensusConfig, certifiedVoteLockPersistence)
 
       // Global L0 injects the command queue so the round-creation signing-participation audit can
       // enqueue the existing certificate-assembly command before sending its first Facility.
@@ -257,11 +257,8 @@ object GlobalSnapshotConsensus {
           appConfig.environment,
           DefaultDelegatedRewardsConfigProvider,
           sharedCfg.fieldsAddedOrdinals.tessellation3MigrationFor(sharedCfg.environment),
-          sharedCfg.fieldsAddedOrdinals.setSumFixFor(sharedCfg.environment),
-          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(sharedCfg.environment),
           sharedCfg.incrementalDelegatedStakingStartingOrdinalFor(sharedCfg.environment),
-          mptStore,
-          effectiveConsensusConfig.activeAdmissionPromoteThreshold
+          mptStore
         )
 
       facilitatorSelector = FacilitatorSelector.make(
@@ -364,8 +361,6 @@ object GlobalSnapshotConsensus {
 
       peerQualityTracker <- PeerQualityTracker.make[F]
 
-      tcaFilter = TrailingCommonAncestorFilter.make[F]
-
       stateCreator =
         GlobalSnapshotConsensusStateCreator.make(
           consensusFunctions,
@@ -379,7 +374,6 @@ object GlobalSnapshotConsensus {
           effectiveConsensusConfig.deterministicConfigHash,
           effectiveConsensusConfig,
           peerQualityTracker,
-          tcaFilter,
           eventMempool,
           sharedServices.localHealthMonitor,
           // v19 per-environment Core floor. v20 routes the env-resolved value through

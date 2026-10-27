@@ -74,9 +74,6 @@ object GlobalSnapshotConsensusFunctions {
   private[snapshot] def delegatedRewardRecipients(facilitators: Set[PeerId]): List[PeerId] =
     facilitators.toList.sorted
 
-  private[snapshot] def usesFullCommitteeRewards(ordinal: SnapshotOrdinal, activation: SnapshotOrdinal): Boolean =
-    ordinal >= activation
-
   def make[F[_]: Async: SecurityProvider: JsonSerializer: Metrics](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
@@ -86,11 +83,8 @@ object GlobalSnapshotConsensusFunctions {
     environment: AppEnvironment,
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
     v3MigrationOrdinal: SnapshotOrdinal,
-    setSumFixOrdinal: SnapshotOrdinal,
-    delegatedRewardsFullCommitteeOrdinal: SnapshotOrdinal,
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
-    mptStore: MptStore[F, GlobalStateKey],
-    activeAdmissionPromoteThreshold: Int
+    mptStore: MptStore[F, GlobalStateKey]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -261,28 +255,14 @@ object GlobalSnapshotConsensusFunctions {
             calcState
           )
           .map { rewardTxs =>
-            if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
-              DelegatedRewardsResult(
-                delegatorRewardsMap = SortedMap.empty,
-                updatedCreateDelegatedStakes = SortedMap.empty,
-                updatedWithdrawDelegatedStakes = SortedMap.empty,
-                nodeOperatorRewards = rewardTxs,
-                reservedAddressRewards = SortedSet.empty,
-                withdrawalRewardTxs = SortedSet.empty,
-                totalEmittedRewardsAmount =
-                  Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
-              )
-            } else {
-              DelegatedRewardsResult(
-                delegatorRewardsMap = SortedMap.empty,
-                updatedCreateDelegatedStakes = SortedMap.empty,
-                updatedWithdrawDelegatedStakes = SortedMap.empty,
-                nodeOperatorRewards = rewardTxs,
-                reservedAddressRewards = SortedSet.empty,
-                withdrawalRewardTxs = SortedSet.empty,
-                totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(rewardTxs.toList.map(_.amount.value.value).sum))
-              )
-            }
+            DelegatedRewardsResult(
+              delegatorRewardsMap = SortedMap.empty,
+              updatedCreateDelegatedStakes = SortedMap.empty,
+              updatedWithdrawDelegatedStakes = SortedMap.empty,
+              nodeOperatorRewards = rewardTxs,
+              reservedAddressRewards = SortedSet.empty,
+              withdrawalRewardTxs = SortedSet.empty
+            )
           }
       }
 
@@ -437,21 +417,10 @@ object GlobalSnapshotConsensusFunctions {
         // lastArtifact.proofs. Different nodes can collect different proof subsets for the same
         // artifact, whereas the StateAdvancer passes `state.roundStartFacilitators`, which is
         // never narrowed by node-local mid-round withdrawals.
-        // Below the correction gate, preserve the briefly-deployed evidence-score filter so
-        // historical snapshots replay byte-identically. At/after the gate, delegated rewards
-        // follow every member of the frozen signing committee; admission score affects Core and
-        // leader classification, not Tier-1 lease retention or payout eligibility.
-        rewardPeerIds =
-          if (usesFullCommitteeRewards(currentOrdinal, delegatedRewardsFullCommitteeOrdinal))
-            delegatedRewardRecipients(facilitators)
-          else
-            ControllerEvidenceDerivation
-              .legacyRewardQualifiedFacilitators(
-                SortedSet.from(facilitators),
-                peerHistory.flatMap(_.controllerEvidence),
-                activeAdmissionPromoteThreshold
-              )
-              .toList
+        // Delegated rewards follow every member of the frozen signing committee; admission score
+        // affects Core and leader classification, not Tier-1 lease retention or payout eligibility.
+        // Replay re-derives nothing here: followers accept the signed reward transactions.
+        rewardPeerIds = delegatedRewardRecipients(facilitators)
         lastFacilitators <- rewardPeerIds.traverse { peerId =>
           PeerId._Id.get(peerId).toAddress.map(_ -> peerId)
         }

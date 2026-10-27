@@ -284,7 +284,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   updateDelegatedStakeAcceptanceManager,
                   EpochProgress(NonNegLong.unsafeFrom(1L)),
                   SnapshotOrdinal.MinValue,
-                  SnapshotOrdinal.MinValue,
                   mptStore,
                   SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue

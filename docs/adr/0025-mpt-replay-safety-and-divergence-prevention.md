@@ -4,7 +4,7 @@ Date: 2026-06-30
 
 ## Status
 
-Accepted
+Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -36,3 +36,22 @@ A bundle of ordinal-gated, content-aware mechanisms:
 The per-environment gate values are tabulated in `docs/operations/fields-added-ordinals.md` (e.g. testnet `sc-fee-balance-from-context = 3101393`) and configured in the `fields-added-ordinals` block of `application.conf`.
 
 Mechanism reference: `docs/mpt/savepoint-and-sync.md`, `docs/operations/fields-added-ordinals.md`.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+The mechanisms above are unchanged; their activation configuration is not.
+
+- Decision 1 example: `sc-fee-balance-from-context` is deleted (its legacy path never produced
+  mainnet history; state-channel fee and staking balances always come from the acceptance context),
+  and testnet restarts from a fresh v4.1 genesis, so its `3101393` boundary no longer exists. Every
+  testnet and integrationnet threshold is now `0`.
+- Decision 2: `last-legacy-state-proof-ordinal` is no longer configured. `StateProofSelector` keeps
+  the `<=` legacy comparator against `lastLegacyStateProofOrdinalFor(env)`, which is derived from
+  the v4.1 cutover `tessellation-41-migration` (C) as C-1 (`MinValue` when C is `0`, `MaxValue`
+  when C is absent). The former explicit mainnet value `5960000` came from an aborted hardfork;
+  mainnet replays legacy proofs until C.
+- Decision 6 and the sub-trie-roots consequence: the `sub-trie-roots` gate is folded into C
+  (`subTrieRootsFor` resolves to C). The Snapshot Streaming coupling still applies: a public C must
+  not be pinned before that network's indexer reads the sub-trie activation and derived boundaries
+  through the same accessors.
+- Decision 5: the dust-sweep mechanism remains, but no sweep is scheduled on any network.

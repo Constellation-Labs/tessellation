@@ -27,11 +27,11 @@ object ViewChangeCertificateBuilder {
     *   - Reject if any two votes carry QCs at the same view with different proposalHashes (malformed; would make `highestQcInVcc`
     *     undefined).
     *
-    * `witnessPool` added so VCC matches the determinism contract of `EvictionCertificateBuilder` and the wider pool can include historical
-    * participants from `peerQuality`. The pool is computed by the caller from consensus-agreed inputs (see
-    * `StateTransitions.widerWitnessPoolAll`); this builder treats it as opaque. Without this filter, an attacker (or a stale relay) could
-    * deliver a `ViewChangeVote` from a peer that's not in the round's eligible/historical set, and earlier the cert builder would happily
-    * count it toward quorum -- diverging from the proposal-validation path that re-derives the same pool and rejects out-of-pool voters.
+    * `witnessPool` matches the determinism contract of `EvictionCertificateBuilder`. The caller passes the frozen-Core certificate voter
+    * pool (`StateTransitions.certificateQuorum`); this builder treats it as opaque. Without this filter, an attacker (or a stale relay)
+    * could deliver a `ViewChangeVote` from a peer that's not in the round's eligible/historical set, and earlier the cert builder would
+    * happily count it toward quorum -- diverging from the proposal-validation path that re-derives the same pool and rejects out-of-pool
+    * voters.
     *
     * Returns `Right(vcc)` with a `NonEmptySet[Signed[ViewChangeVote]]`, or `Left(reason)` with a stable code-like string.
     */

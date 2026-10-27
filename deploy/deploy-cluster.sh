@@ -31,10 +31,12 @@
 #                     block: testnet=>testnet, nightly=>dev). Non-dev values generate
 #                     tn1-3-parity config: gl0 seedlist (cluster's own ids), per-IP
 #                     snapshot allowlist, MPT debug dump, and NO CL_TEST_MODE/
-#                     CL_LOCAL_MODE. NOTE: a FRESH GENESIS cannot run under
-#                     CL_APP_ENV=testnet (real-chain landmarks like last-full-global-
-#                     snapshot-ordinal=736766 are baked into the env; validated
-#                     2026-07-01) — non-dev profiles are for data-preserving deploys.
+#                     CL_LOCAL_MODE. testnet and integrationnet are configured for a
+#                     fresh v4.1 genesis (every activation ordinal and
+#                     last-full-global-snapshot-ordinal are 0, like dev), so a fresh
+#                     genesis can run under CL_APP_ENV=testnet. (Before the v4.1
+#                     simplification testnet carried real-chain landmarks such as
+#                     last-full-global-snapshot-ordinal=736766 and could not.)
 #
 # Real-data migration knobs (tn1-3 -> Hetzner cutover; see
 # ~/src/internal-plans/ai/reviewed/plans/testnet-hetzner-migration/cutover.md):

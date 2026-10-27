@@ -19,15 +19,6 @@ import io.constellationnetwork.security.hash.Hash
   */
 object CertifiedRoundCommitteeProjector {
 
-  /** Buffered withdrawal rumors are not certified and can arrive before state creation on one node but after it on another.
-    *
-    * Legacy behavior is retained before v35. In the certified epoch, the frozen round-start/QC committee ignores that local timing input;
-    * an in-round withdrawal may suppress local work but cannot change the committee. A future lease-withdrawal feature needs an explicit
-    * certified transition.
-    */
-  def roundStartWithdrawals(certifiedConsensusActive: Boolean, locallyObserved: Set[PeerId]): Set[PeerId] =
-    if (certifiedConsensusActive) Set.empty else locallyObserved
-
   final case class CarriedControllerState(
     activeScores: Map[PeerId, Int],
     peerQuality: Map[PeerId, (Int, Int)],

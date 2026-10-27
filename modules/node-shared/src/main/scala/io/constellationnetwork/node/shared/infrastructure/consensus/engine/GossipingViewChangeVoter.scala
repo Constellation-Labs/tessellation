@@ -61,11 +61,9 @@ class GossipingViewChangeVoter[F[
       case Some(state) =>
         CertifiedConsensus
           .pacemakerVoteTargets(
-            state.certifiedConsensusActive,
             selfId,
             state.roundStartFacilitators.value.toSet,
-            state.coreFacilitators.value.toSet,
-            state.facilitators.value.toSet
+            state.coreFacilitators.value.toSet
           )
           .fold(
             ConsensusLog

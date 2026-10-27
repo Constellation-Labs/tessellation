@@ -276,7 +276,7 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     // is keyed by the actual signer PeerId, so duplicate-relay cannot inflate the quorum count
     // at certificate-assembly time.
     storage.getState(key).flatMap { state =>
-      val acceptsAtKey = ctx.membershipPolicy.acceptsEvictionVotesAt(state.exists(_.certifiedConsensusActive))
+      val acceptsAtKey = ctx.membershipPolicy.acceptsEvictionVotesForRound(state.isDefined)
 
       if (!acceptsAtKey) {
         observeTip >> ConsensusLog.debug(

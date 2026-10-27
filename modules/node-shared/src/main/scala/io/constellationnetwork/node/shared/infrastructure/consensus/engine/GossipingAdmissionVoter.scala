@@ -64,7 +64,7 @@ class GossipingAdmissionVoter[F[
             vote.sign(keyPair).flatMap { signedVote =>
               val targets = MembershipVoteGossipRecipients.select(
                 selfId,
-                membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive),
+                membershipPolicy.allowsCertifiedAtomicReplacement,
                 state.facilitators.value.toSet,
                 state.roundStartFacilitators.value.toSet
               )

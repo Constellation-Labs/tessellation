@@ -73,9 +73,9 @@ object Mocks {
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    fixingSpendActionAggregateBalanceOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None
+    tessellation41MigrationOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
+    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None,
+    removingProcessedDelegatedStakeWithdrawalsOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -201,7 +201,7 @@ object Mocks {
     val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None)
     val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
       updateDelegatedStakeValidator,
-      fixingDelegatedStakeDoubleWithdrawalOrdinal
+      tessellation41MigrationOrdinal
     )
 
     val mockUpdateNodeCollateralAcceptanceManager = new UpdateNodeCollateralAcceptanceManager[IO] {
@@ -234,8 +234,11 @@ object Mocks {
         activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
         allBalances: Map[Option[Address], SortedMap[Address, Balance]],
         enforceAggregateBalance: Boolean
-      ): IO[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])] =
-        (Map.empty[Address, List[SpendAction]], Map.empty[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])
+      ): IO[(Map[Address, List[SpendAction]], Map[Address, List[(SpendAction, List[SpendActionValidator.SpendActionValidationError])]])] =
+        (
+          Map.empty[Address, List[SpendAction]],
+          Map.empty[Address, List[(SpendAction, List[SpendActionValidator.SpendActionValidationError])]]
+        )
           .pure[IO]
     }
 
@@ -280,8 +283,9 @@ object Mocks {
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
                     FieldsAddedOrdinalsFixtures.current.copy(
-                      fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
-                      fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal)
+                      tessellation41Migration = Map(AppEnvironment.Dev -> tessellation41MigrationOrdinal),
+                      removingProcessedDelegatedStakeWithdrawals =
+                        Map(AppEnvironment.Dev -> removingProcessedDelegatedStakeWithdrawalsOrdinal)
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,
@@ -470,8 +474,7 @@ object Mocks {
         SortedMap.empty,
         SortedSet.empty,
         SortedSet.empty,
-        SortedSet.empty,
-        Amount.empty
+        SortedSet.empty
       ).pure[F]
   }
 
@@ -994,14 +997,6 @@ object Mocks {
                 }.toMap
               }
             )
-
-          totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
-                                   DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
-                                 else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
-            reservedAddressRewards,
-            nodeOperatorRewardsTxs,
-            delegatorRewardsMap
-          )
         } yield
           DelegatedRewardsResult(
             delegatorRewardsMap,
@@ -1009,8 +1004,7 @@ object Mocks {
             updatedWithdrawDelegatedStakes,
             nodeOperatorRewardsTxs,
             reservedAddressRewards,
-            withdrawalRewardTxs,
-            totalEmittedReward
+            withdrawalRewardTxs
           )
     }
   }

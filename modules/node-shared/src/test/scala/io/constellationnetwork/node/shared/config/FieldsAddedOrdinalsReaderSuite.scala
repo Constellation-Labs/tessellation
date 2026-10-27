@@ -22,6 +22,7 @@ object FieldsAddedOrdinalsReaderSuite extends SimpleIOSuite {
   private def keyOf(field: String): String = field match {
     case "tessellation3Migration"   => "tessellation-3-migration"
     case "tessellation301Migration" => "tessellation-301-migration"
+    case "tessellation41Migration"  => "tessellation-41-migration"
     case name                       => name.replaceAll("([A-Z])", "-$1").toLowerCase
   }
 

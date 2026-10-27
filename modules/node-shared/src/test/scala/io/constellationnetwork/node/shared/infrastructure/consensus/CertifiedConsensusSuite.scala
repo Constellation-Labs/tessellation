@@ -587,36 +587,23 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       )
   }
 
-  test("pacemaker voting keeps legacy targets but restricts certified votes to frozen Core") { _ =>
+  test("pacemaker voting restricts certified votes to frozen Core and delivers them to the frozen committee") { _ =>
     val full = Set(pA, pB, pC, pD)
     val core = Set(pA, pB)
-    val legacy = Set(pA, pC)
 
-    val legacyPlan = pacemakerVoteTargets(
-      certifiedConsensusActive = false,
-      selfId = pA,
-      frozenCommittee = full,
-      frozenCore = core,
-      legacyFacilitators = legacy
-    )
     val certifiedCorePlan = pacemakerVoteTargets(
-      certifiedConsensusActive = true,
       selfId = pA,
       frozenCommittee = full,
-      frozenCore = core,
-      legacyFacilitators = legacy
+      frozenCore = core
     )
     val certifiedTier1Plan = pacemakerVoteTargets(
-      certifiedConsensusActive = true,
       selfId = pC,
       frozenCommittee = full,
-      frozenCore = core,
-      legacyFacilitators = legacy
+      frozenCore = core
     )
 
     IO.pure(
       expect.all(
-        legacyPlan.contains(Set(pC)),
         certifiedCorePlan.contains(Set(pB, pC, pD)),
         certifiedTier1Plan.isEmpty
       )
