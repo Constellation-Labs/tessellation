@@ -1,0 +1,13 @@
+{
+  "network": "mainnet",
+  "ordinal": 7168912,
+  "nextOrdinal": 7168913,
+  "expectedSnapshotHash": "83602e57f5a8fb3865ff4d4d760fbe96a7461a7cdf6516310b6138dfd336490b",
+  "source": "https://l0-lb-mainnet.constellationnetwork.io/global-snapshots/7168912",
+  "expectedHashSource": "https://l0-lb-mainnet.constellationnetwork.io/global-snapshots/7168913",
+  "stateChannelAddress": "DAG6A8Dw78yWv9z8pHqjJ4JVwSqq9V9Ha7CRUQnY",
+  "stateChannelIndex": 0,
+  "baselineDecoder": "brotli4j 1.12.0",
+  "baselineEncoder": "brotli4j 1.12.0, quality 2, repository JsonSerializer printer",
+  "walletFixtures": "Locally generated, offline signed fixtures; never submitted to a network. Allow-spend bytes/hash/signature differ under brotli4j 1.24.0."
+}
