@@ -6,7 +6,7 @@ import cats.data.OptionT
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
-import cats.{Applicative, Parallel}
+import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.concurrent.duration._
 
@@ -15,9 +15,11 @@ import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.metrics.updateFailedConfirmingStateChannelBinaryMetrics
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
@@ -29,6 +31,7 @@ import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
 import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -36,6 +39,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object StateChannel {
 
   private val awakePeriod = 10.seconds
+  private val recoveryTargetMaxRefreshes = 30
 
   /** One construction/signing/enqueue path shared by normal publication and the rollback recovery barrier. No custom serialization or hash
     * domain is introduced; the existing GlobalSnapshotSync and Signed.forAsyncHasher paths remain authoritative.
@@ -52,6 +56,73 @@ object StateChannel {
       signedGlobalSnapshotSync <- Signed.forAsyncHasher(sync, selfKeyPair)
       _ <- enqueueConsensusEventFn(GlobalSnapshotSyncEvent(signedGlobalSnapshotSync)).run()
     } yield signedGlobalSnapshotSync
+  }
+
+  /** Selects the Global L0 anchor for the rollback recovery declaration.
+    *
+    * The declaration pins the first successor's `globalSyncView` to `anchor - syncOffset`. Construction resolves that view's fee context
+    * from Global state held by this node (`LastSyncGlobalSnapshotStorage.getCombined`), while the retained window carries hashes only. A
+    * lead whose first Global L0 pull is the anchor never holds the target's state, so every first-successor proposal would fail with
+    * `ExactGlobalFeeContextUnavailable` until the recovery deadline. Keep processing Global L0 snapshots through the ordinary path until
+    * the target's exact state is held; fail closed if it conflicts with the retained window or is still absent after `maxRefreshes`.
+    */
+  def selectRecoveryGlobalAnchor[F[_]: Async: Hasher](
+    refresh: F[Unit],
+    lastSyncGlobalSnapshot: LastSyncGlobalSnapshotStorage[F],
+    recentGlobalSnapshots: F[List[Hashed[GlobalIncrementalSnapshot]]],
+    syncOffset: NonNegLong,
+    maxRefreshes: Int = recoveryTargetMaxRefreshes,
+    retryDelay: FiniteDuration = awakePeriod
+  ): F[(Hashed[GlobalIncrementalSnapshot], SnapshotOrdinal)] = {
+    val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
+    def attempt(refreshes: Int): F[(Hashed[GlobalIncrementalSnapshot], SnapshotOrdinal)] =
+      for {
+        _ <- refresh
+        globalAnchor <- lastSyncGlobalSnapshot.get.flatMap(
+          _.liftTo[F](new IllegalStateException("Cannot arm recovery sync refresh without a current Global L0 anchor"))
+        )
+        recent <- recentGlobalSnapshots
+        selectedTarget <- SnapshotOrdinal(globalAnchor.ordinal.value - syncOffset).liftTo[F](
+          new IllegalStateException(s"Recovery sync target underflow anchor=${globalAnchor.ordinal} offset=$syncOffset")
+        )
+        recentByOrdinal = recent.iterator.map(value => value.ordinal -> value.hash).toMap
+        _ <- MonadThrow[F].raiseUnless(
+          recentByOrdinal.get(globalAnchor.ordinal).contains(globalAnchor.hash) &&
+            recentByOrdinal.contains(selectedTarget)
+        )(
+          new IllegalStateException(
+            s"Recovery sync requires a complete canonical recent window: anchor=${globalAnchor.ordinal} " +
+              s"selectedTarget=$selectedTarget available=${recentByOrdinal.keys.toList.sorted.mkString(",")}"
+          )
+        )
+        held <- lastSyncGlobalSnapshot.getCombined(selectedTarget).flatMap(_.traverse { case (snapshot, _) => snapshot.hash })
+        selected <- held match {
+          case Some(hash) if recentByOrdinal.get(selectedTarget).contains(hash) =>
+            (globalAnchor, selectedTarget).pure[F]
+          case Some(hash) =>
+            MonadThrow[F].raiseError[(Hashed[GlobalIncrementalSnapshot], SnapshotOrdinal)](
+              new IllegalStateException(
+                s"Recovery sync target Global L0 state conflicts with the canonical recent window: anchor=${globalAnchor.ordinal} " +
+                  s"selectedTarget=$selectedTarget held=${hash.show}"
+              )
+            )
+          case None if refreshes < maxRefreshes =>
+            logger.info(
+              s"Recovery sync target Global L0 state is not held yet: anchor=${globalAnchor.ordinal} selectedTarget=$selectedTarget " +
+                s"refresh=$refreshes/$maxRefreshes"
+            ) >> Async[F].sleep(retryDelay) >> attempt(refreshes + 1)
+          case None =>
+            MonadThrow[F].raiseError[(Hashed[GlobalIncrementalSnapshot], SnapshotOrdinal)](
+              new IllegalStateException(
+                s"Recovery sync target Global L0 state is not held after $refreshes refreshes: anchor=${globalAnchor.ordinal} " +
+                  s"selectedTarget=$selectedTarget"
+              )
+            )
+        }
+      } yield selected
+
+    attempt(1)
   }
 
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Parallel: JsonSerializer: Hasher](
