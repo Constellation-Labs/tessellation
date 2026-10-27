@@ -6,7 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 import scala.math.BigDecimal.RoundingMode
 
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrentDagSupply, DelegatedRewardsDistributor}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.PricingUpdate
@@ -40,15 +40,18 @@ object RewardsInfoCalculator {
           Option.empty[RewardsInfo].pure[F]
         } else {
           for {
-            latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
+            emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
+            fixedCommission <- delegatedRewardsDistributor.getDistributionProgram(lastSnapshot.epochProgress).map(_.fixedCommission)
+            latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo, fixedCommission)
 
-            (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
+            (_, _, totalDelegateStake, legacyTotalSupply) <- processDelegations(lastSnapshotInfo)
+            currentTotalSupply <-
+              if (emissionConfig.ledgerSupply) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F] else legacyTotalSupply.pure[F]
 
             currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
             nextPrice <- getNextDagPrice(lastSnapshotInfo)
 
             avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
-            emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
             totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
           } yield
             Some(
@@ -90,15 +93,20 @@ object RewardsInfoCalculator {
         ).mapN(Tuple4.apply)
       }
 
-      private def getLatestDelegateRewardTotal(snapshot: GlobalIncrementalSnapshot, info: GlobalSnapshotInfo): F[Amount] = {
+      private def getLatestDelegateRewardTotal(
+        snapshot: GlobalIncrementalSnapshot,
+        info: GlobalSnapshotInfo,
+        fixedCommission: Option[NonNegFraction]
+      ): F[Amount] = {
         val delegateRewards = snapshot.delegateRewards.getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]])
         val nodeParams = info.updateNodeParameters
           .getOrElse(SortedMap.empty[ID.Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)])
 
         val calcFullReward: (Long, (PeerId, SortedMap[Address, Amount])) => Long = {
           case (acc, (peerId, rewards)) =>
-            val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
-            val nodeCommission = BigDecimal(nodeCommissionValue)
+            val nodeCommission = fixedCommission.map(_.toBigDecimal).getOrElse {
+              BigDecimal(nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0))
+            }
 
             val delegatePortion = if (nodeCommission >= 1.0) BigDecimal(0.0) else BigDecimal(1.0) - nodeCommission
 

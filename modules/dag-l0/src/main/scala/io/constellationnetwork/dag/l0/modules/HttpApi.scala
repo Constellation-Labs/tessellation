@@ -236,7 +236,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.globalSnapshot,
       storages.node,
       services.cluster,
-      sharedValidators.updateNodeParametersValidator
+      sharedValidators.updateNodeParametersValidator,
+      services.rewards.delegatedRewards
     )
   }
   private val delegatedStakesRoutes =
