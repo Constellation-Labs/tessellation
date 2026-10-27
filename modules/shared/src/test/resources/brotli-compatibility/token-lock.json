@@ -1,0 +1,24 @@
+{
+  "sdk": "@stardust-collective/dag4-keystore 2.8.1",
+  "signed": {
+    "value": {
+      "amount": 9038736278659,
+      "fee": 176770,
+      "parent": {
+        "ordinal": 2338455,
+        "hash": "4598659f14180d404dbfe7a92bb2b26e8dc9ef144b24e68316d0105967036557"
+      },
+      "source": "DAG181Y6gT6Mc7GtCgTZjTpcsWuj9f8kUhqQAw1p",
+      "currencyId": "DAG82Wvy4WnRsM879fnbBbQs1NB8ChGFQv5sx531",
+      "unlockEpoch": 9060712
+    },
+    "proofs": [
+      {
+        "id": "a812f238e98d4e30f93386ac7161bb7bbfe61d5d12b775dc9e32812064c7a84ba4520c5b66fef42f4a7c7ac4e0fd0f686d087455c4ced42c7e0f48c5fa2c33e2",
+        "signature": "304402200274af6fb21e499fb6222026d4def27e135fb74cf12f626a989c4a73ac30991902204eeeef79299a81a2f186bb243870cef744981fea5a25edf1e98a6f786d611de3"
+      }
+    ]
+  },
+  "compressedHex": "1b0d010080aaaaaaeaff7497b31e964d546fe6ee110671f000b0000b7008bf992ee616ee1e6a16a6661ee1e0e00370301644629218e04e9b43311fd0fd8c6b5ec0592ad008cd0d6a650984759e530ef7b7080e76558dfc70bbcb43fe287b34b6cf7ee39bc2de37b81dead7e6a6cabf120c08f4298163461b43094cdd9cf202ee0143570670209545ad6ccf24431a2595d1f7c974967bcf3dd70963b0a967527a2e9346c174a48c2aab0d155a290304c6397ee7ee0a8e0b8152a9278132ae7348e06057d50cd9973eb57a1f4cbd6c4fedf1dc4ea11cd6b3edf1f239fc36d51f9b80c09aaf63b8bc4c6318c059aaa961fc09",
+  "hash": "72847708eab9845418caa0e0fce71f49312f00d66635e30c38ca1a3be4c94a25"
+}

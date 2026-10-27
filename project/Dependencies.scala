@@ -10,6 +10,7 @@ object Dependencies {
     // Historical binaries are consumed as received bytes; Global v35 lineage does not reconstruct
     // or re-compress Currency ancestry, so this is not a permanent v35 verifier dependency.
     val brotli4j = "1.12.0"
+    val brotliDecoder = "0.1.2"
     val cats = "2.13.0"
     val catsEffect = "3.6.3"
     val catsRetry = "3.1.3"
@@ -75,6 +76,7 @@ object Dependencies {
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
     val brotli4j = "com.aayushatharva.brotli4j" % "brotli4j" % V.brotli4j
+    val brotliDecoder = "org.brotli" % "dec" % V.brotliDecoder
     def brotli4jNative(artifact: String): ModuleID = brotli4j.withName(s"native-$artifact")
 
     val cats = "org.typelevel" %% "cats-core" % V.cats

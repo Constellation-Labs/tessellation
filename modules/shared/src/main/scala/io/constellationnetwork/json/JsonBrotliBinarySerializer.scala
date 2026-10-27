@@ -1,17 +1,17 @@
 package io.constellationnetwork.json
 
-import java.io.{ByteArrayOutputStream, OutputStream}
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, OutputStream}
 import java.nio.charset.StandardCharsets
 
 import cats.effect.Async
 import cats.syntax.all._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
-import com.aayushatharva.brotli4j.decoder.Decoder.{decompress => brotliDecompress}
 import com.aayushatharva.brotli4j.encoder.BrotliOutputStream
 import com.aayushatharva.brotli4j.encoder.Encoder.Parameters
 import io.circe.jawn.JawnParser
 import io.circe.{Decoder, Encoder, Printer}
+import org.brotli.dec.BrotliInputStream
 
 trait JsonBrotliBinarySerializer[F[_]] {
   def serialize[A: Encoder](content: A): F[Array[Byte]]
@@ -69,11 +69,15 @@ object JsonBrotliBinarySerializer {
 
         def deserialize[A: Decoder](content: Array[Byte]): F[Either[Throwable, A]] =
           Async[F].blocking {
-            val decompressed = brotliDecompress(content).getDecompressedData
+            // Decode untrusted streams in Java; keep the native encoder unchanged for exact hash/signature compatibility.
+            val stream = new BrotliInputStream(new ByteArrayInputStream(content))
+            val decompressed =
+              try stream.readAllBytes()
+              finally stream.close()
             parser
               .parseByteBuffer(java.nio.ByteBuffer.wrap(decompressed))
               .flatMap[Throwable, A](_.as[A])
-          } <* Async[F].cede
+          }.attempt.map(_.flatten) <* Async[F].cede
       }
     }
 }
