@@ -1,15 +1,18 @@
 package io.constellationnetwork.json
 
+import java.io.ByteArrayInputStream
+
 import cats.effect.kernel.Sync
+import cats.syntax.applicativeError._
 import cats.syntax.functor._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
-import com.aayushatharva.brotli4j.decoder.{Decoder => BrotliDecoder}
 import com.aayushatharva.brotli4j.encoder.Encoder.Parameters
 import com.aayushatharva.brotli4j.encoder.{Encoder => BrotliEncoder}
 import io.circe.jawn.JawnParser
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Printer}
+import org.brotli.dec.BrotliInputStream
 
 trait JsonBrotliBinarySerializer[F[_]] {
   def serialize[A: Encoder](content: A): F[Array[Byte]]
@@ -37,9 +40,15 @@ object JsonBrotliBinarySerializer {
         }
 
         def deserialize[A: Decoder](content: Array[Byte]): F[Either[Throwable, A]] =
-          Sync[F]
-            .delay(BrotliDecoder.decompress(content).getDecompressedData)
-            .map(JawnParser(false).decodeByteArray[A](_))
+          Sync[F].delay {
+            // Decode untrusted streams in Java; retain the native encoder for exact hash/signature compatibility.
+            val stream = new BrotliInputStream(new ByteArrayInputStream(content))
+            val decompressed =
+              try stream.readAllBytes()
+              finally stream.close()
+            JawnParser(false).decodeByteArray[A](decompressed)
+          }.attempt
+            .map(_.flatten)
       }
     }
 }

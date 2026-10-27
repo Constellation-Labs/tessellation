@@ -192,6 +192,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.bcExtensions,
       Libraries.betterFiles,
       Libraries.brotli4j,
+      Libraries.brotliDecoder,
       Libraries.brotli4jNative("linux-x86_64"),
       Libraries.brotli4jNative("linux-aarch64"),
       Libraries.brotli4jNative("osx-x86_64"),

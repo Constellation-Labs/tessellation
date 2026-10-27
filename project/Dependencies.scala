@@ -6,6 +6,7 @@ object Dependencies {
     val bouncyCastle = "1.70"
     val betterFiles = "3.9.1"
     val brotli4j = "1.12.0"
+    val brotliDecoder = "0.1.2"
     val cats = "2.9.0"
     val catsEffect = "3.4.2"
     val catsRetry = "3.1.0"
@@ -81,6 +82,7 @@ object Dependencies {
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
     val brotli4j = "com.aayushatharva.brotli4j" % "brotli4j" % V.brotli4j
+    val brotliDecoder = "org.brotli" % "dec" % V.brotliDecoder
     def brotli4jNative(artifact: String): ModuleID = brotli4j.withName(s"native-$artifact")
 
     val cats = "org.typelevel" %% "cats-core" % V.cats

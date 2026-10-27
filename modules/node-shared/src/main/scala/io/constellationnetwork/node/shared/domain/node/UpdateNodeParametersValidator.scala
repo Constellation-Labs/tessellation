@@ -82,7 +82,7 @@ object UpdateNodeParametersValidator {
           // registration is open to any node whose address holds the minimum balance; seedlist membership no longer matters
           case _ :: Nil if metanomicsV2Active(epochProgress) =>
             val balance = lastSnapshotContext.balances.getOrElse(signed.source, Balance.empty)
-            val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+            val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance(epochProgress)
             if (balance.satisfiesCollateral(minimum)) signed.validNec[UpdateNodeParametersValidationError]
             else InsufficientRegistrationBalance(signed.source, balance, minimum).invalidNec[Signed[UpdateNodeParameters]]
           case nodeId :: Nil =>

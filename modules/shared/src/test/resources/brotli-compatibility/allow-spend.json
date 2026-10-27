@@ -1,0 +1,30 @@
+{
+  "sdk": "@stardust-collective/dag4-keystore 2.8.1",
+  "signed": {
+    "value": {
+      "amount": 278475667114447,
+      "fee": 276342,
+      "parent": {
+        "ordinal": 8985712,
+        "hash": "7dbfb46578361353531d26ebe315db4584c2e61c03baf6b1a04d58c28435fb1a"
+      },
+      "source": "DAG8BHUWZw592MsnsUNLwWJ82zF5Ziq19SRr3AnJ",
+      "currencyId": "DAG5treZauGfVxRft3EACcp5RXXqx6FZxEdegaFQ",
+      "approvers": [
+        "DAG5Aw4z4Bt3FYZ71fBNbtHzatFbDu13surkcvbD",
+        "DAG5i3Exprt551XgRPtaDrATQDxCUKUKHrFyjPSk",
+        "DAG7SPF6GaVyc2128VbMLG2Qa8UXV5bBSyFVEfCF"
+      ],
+      "destination": "DAG1TsTf6TDx2KR857WLEoRqsqwvnHPhLXYPnQNj",
+      "lastValidEpochProgress": 4093731
+    },
+    "proofs": [
+      {
+        "id": "866ab5f27983d2537ef84e60d4cd80cca70330ae4aba70f2ffc4e317832ce8d19becc6cb656e4d4940d582c4e46e8a8af7981af4c89719af1c9af5d791e4e603",
+        "signature": "3045022100d69e81efbc3c8c4144a5400511e0b5383eae96f7eeef816a9a4bd27849c3ac0602207afca7d8e5323943db8007dd89a56c55fc1d8a5a3ffd8be2b57e10d8bee8d468"
+      }
+    ]
+  },
+  "compressedHex": "1be2010080aaaaaaeaff7497b31d5c375375bb99bb2d9ee11e0ee6e6eee61e1e9007553335778bf0303357557337f780188083b1201293c40077da1c29f417e44f37b40e02cc05e5ccf739429452ee81ec7bd3ddb5b1107c4214a62c7cd0179d39927c9c38aa676be5162fe912150d88d8c17c97771581075198b286c4636f1c63e878ce33272313ee36d138df2ff7cb85499e5fd9f61b3c88c2946fb3c44f65f12c31c2a250efab146fa4d81f0ba666db6752c4f53c81ff1e948331ba2d9fff2a08200a53e68c3ec921ad8b31af1d89c379d9b3fc78bc8d7e721ae34a9f65b2010f2a6d5dd34ad7742d04108529dad95dedefa2112f73c1f8611577f9cdde1ef776915d56c78facddacbfc0835a6b0830f709c51e5ca57585bc3655dc77e52533ddd9686b21a09329e10479d04ba35b07c12f5ca4bd4000bc52b5a23ee382f88830c208aab0af952688558a32414bac7d544e8892b5af909cd08a89120b4a58ad90040f3a5335adbc4220a6827184ff3cb0dd604a0d0144612a668bfde1f46053fc6e5bbb5faf1e8737815f093b353734dde68684ed1bfc01",
+  "hash": "7ea536448a5c37b4cbfc0bcc882b34563d3c46fa8183c34e097af8f58d0eea2f"
+}

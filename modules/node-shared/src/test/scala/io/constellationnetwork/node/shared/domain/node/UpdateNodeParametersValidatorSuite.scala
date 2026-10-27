@@ -20,7 +20,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValid
 }
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
@@ -299,9 +299,9 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
 
   private val legacyEpoch = EpochProgress.MinValue
 
-  test("after the metanomics gate a node outside the seedlist can register with a 1M DAG balance") { res =>
+  test("after the metanomics gate a node outside the seedlist can register with the registration balance") { res =>
     implicit val (json, h, sp) = res
-    val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+    val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance(legacyEpoch)
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -314,9 +314,9 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
     } yield expect.same(NodeNotInSeedList(peerId).invalidNec, legacy).and(expect.same(Valid(signed), active))
   }
 
-  test("after the metanomics gate a seedlist node with less than 1M DAG cannot register") { res =>
+  test("after the metanomics gate a seedlist node below the registration balance cannot register") { res =>
     implicit val (json, h, sp) = res
-    val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+    val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance(legacyEpoch)
     val short = Balance(NonNegLong.unsafeFrom(minimum.value.value - 1))
 
     for {
@@ -333,6 +333,31 @@ object UpdateNodeParametersValidatorSuite extends MutableIOSuite {
         .same(Valid(signed), legacy)
         .and(expect.same(InsufficientRegistrationBalance(source, short, minimum).invalidNec, active))
         .and(expect.same(InsufficientRegistrationBalance(source, Balance.empty, minimum).invalidNec, unfunded))
+  }
+
+  test("a node holding 250K DAG can register until the Nov 14 epoch and needs 1M DAG from it") { res =>
+    implicit val (json, h, sp) = res
+    val raise = DefaultDelegatedRewardsConfigProvider.mainnetRegistrationBalanceRaiseEpoch
+    val beforeRaise = EpochProgress(NonNegLong.unsafeFrom(raise.value.value - 1L))
+    val quarterMillion = Balance(NonNegLong.unsafeFrom(250_000_00000000L))
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      source = keyPair.getPublic.toAddress
+      signed <- forAsyncHasher(testUpdateNodeParameters(source), keyPair)
+      funded = mkGlobalContext().copy(balances = SortedMap(source -> quarterMillion))
+      validator = mkValidator(Set.empty, metanomicsV2Active = true)
+      before <- validator.validate(signed, funded, beforeRaise)
+      at <- validator.validate(signed, funded, raise)
+    } yield
+      expect
+        .same(Valid(signed), before)
+        .and(
+          expect.same(
+            InsufficientRegistrationBalance(source, quarterMillion, Amount(NonNegLong.unsafeFrom(1_000_000_00000000L))).invalidNec,
+            at
+          )
+        )
   }
 
   private def mkValidator(peersList: Set[PeerId], metanomicsV2Active: Boolean = false)(

@@ -1,0 +1,12 @@
+{
+  "value" : {
+    "z" : null,
+    "a" : "á😀中文",
+    "array" : [
+      null,
+      42
+    ]
+  },
+  "compressedHex" : "0b17807b227a223a6e756c6c2c2261223a22c3a1f09f9880e4b8ade69687222c226172726179223a5b6e756c6c2c34325d7d03",
+  "baseline" : "release/mainnet original forSync default printer, brotli4j 1.12.0, quality 2; preserves key order and null fields"
+}
